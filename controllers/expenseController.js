@@ -4,6 +4,7 @@ const { BankAccount, BankTransaction } = require("../models/BankAccount");
 const ChartOfAccount = require("../models/ChartOfAccount");
 const JournalService = require("../services/journalService");
 const JournalEntry = require("../models/JournalEntry");
+const AuditService = require("../services/auditService");
 
 // @desc    Get all expenses for a company
 // @route   GET /api/expenses
@@ -49,6 +50,7 @@ exports.getExpenses = async (req, res, next) => {
       .populate("expense_account_id", "code name")
       .populate("bank_account_id", "accountCode accountName")
       .populate("petty_cash_fund_id", "name")
+      .populate("department_id", "code name")
       .sort({ expenseDate: -1 })
       .skip((page - 1) * limit)
       .limit(parseInt(limit));
@@ -56,23 +58,42 @@ exports.getExpenses = async (req, res, next) => {
     const total = await Expense.countDocuments(query);
 
     // Transform to include populated Account and Method columns
-    const transformedExpenses = expenses.map((exp) => ({
-      _id: exp._id,
-      reference: exp.reference_no || exp.expenseNumber,
-      date: exp.expenseDate || exp.expense_date,
-      description: exp.description,
-      account: exp.expense_account_id
-        ? {
-            _id: exp.expense_account_id._id,
-            code: exp.expense_account_id.code,
-            name: exp.expense_account_id.name,
-          }
-        : null,
-      method: exp.payment_method || exp.paymentMethod,
-      amount: exp.amount,
-      taxAmount: exp.tax_amount || exp.vatAmount,
-      totalAmount: exp.total_amount || exp.amount + (exp.tax_amount || 0),
+    const transformedExpenses = expenses.map((exp) => {
+      const transformed = {
+        _id: exp._id,
+        reference: exp.reference_no || exp.expenseNumber,
+        date: exp.expenseDate || exp.expense_date,
+        description: exp.description,
+        account: exp.expense_account_id
+          ? {
+              _id: exp.expense_account_id._id,
+              code: exp.expense_account_id.code,
+              name: exp.expense_account_id.name,
+            }
+          : null,
+        method: exp.payment_method || exp.paymentMethod,
+        amount: exp.amount,
+        taxAmount: exp.tax_amount || exp.vatAmount,
+        totalAmount: exp.total_amount || exp.amount + (exp.tax_amount || 0),
+        // Rwanda-specific currency fields
+        currencyCode: exp.currencyCode || 'RWF',
+        exchangeRate: exp.exchangeRate || 1,
+        amountInRWF: exp.amountInRWF || exp.amount,
+        taxAmountInRWF: exp.taxAmountInRWF || (exp.tax_amount || 0),
+        totalAmountInRWF: exp.totalAmountInRWF || exp.total_amount || (exp.amount + (exp.tax_amount || 0)),
+        // RRA Tax fields
+        rraTaxCategory: exp.rraTaxCategory,
+        isVATRecoverable: exp.isVATRecoverable,
+        // Department
+        department: exp.department_id && typeof exp.department_id === 'object'
+          ? {
+              _id: exp.department_id._id,
+              code: exp.department_id.code,
+              name: exp.department_id.name,
+            }
+          : null,
       status: exp.status,
+      type: exp.type,
       bankAccount: exp.bank_account_id
         ? {
             _id: exp.bank_account_id._id,
@@ -87,9 +108,12 @@ exports.getExpenses = async (req, res, next) => {
           }
         : null,
       receiptRef: exp.receipt_ref,
+      createdBy: exp.createdBy,
       createdAt: exp.createdAt,
       updatedAt: exp.updatedAt,
-    }));
+    };
+    return transformed;
+    });
 
     res.json({
       success: true,
@@ -115,7 +139,11 @@ exports.getExpense = async (req, res, next) => {
       company: companyId,
     })
       .populate("createdBy", "name email")
-      .populate("approvedBy", "name email");
+      .populate("approvedBy", "name email")
+      .populate("expense_account_id", "code name")
+      .populate("bank_account_id", "accountCode accountName")
+      .populate("petty_cash_fund_id", "name")
+      .populate("department_id", "code name");
 
     if (!expense) {
       return res
@@ -141,6 +169,23 @@ exports.getExpense = async (req, res, next) => {
       taxAmount: expense.tax_amount || expense.vatAmount,
       totalAmount:
         expense.total_amount || expense.amount + (expense.tax_amount || 0),
+      // Rwanda-specific currency fields
+      currencyCode: expense.currencyCode || 'RWF',
+      exchangeRate: expense.exchangeRate || 1,
+      amountInRWF: expense.amountInRWF || expense.amount,
+      taxAmountInRWF: expense.taxAmountInRWF || (expense.tax_amount || 0),
+      totalAmountInRWF: expense.totalAmountInRWF || expense.total_amount || (expense.amount + (expense.tax_amount || 0)),
+      // RRA Tax fields
+      rraTaxCategory: expense.rraTaxCategory,
+      isVATRecoverable: expense.isVATRecoverable,
+      // Department
+      department: expense.department_id
+        ? {
+            _id: expense.department_id._id,
+            code: expense.department_id.code,
+            name: expense.department_id.name,
+          }
+        : null,
       status: expense.status,
       type: expense.type,
       category: expense.category,
@@ -203,6 +248,13 @@ exports.createExpense = async (req, res, next) => {
       recurringFrequency,
       budget_id,
       budget_line_id,
+      // Rwanda-specific fields
+      department_id,
+      departmentId,
+      rraTaxCategory,
+      currencyCode,
+      exchangeRate,
+      isVATRecoverable,
     } = req.body;
 
     // Normalize payment method - use payment_method if sent from frontend
@@ -215,6 +267,8 @@ exports.createExpense = async (req, res, next) => {
     const normalizedTotalAmount =
       total_amount || amount + (tax_amount || taxAmount || 0);
     const normalizedTaxAmount = tax_amount || taxAmount || 0;
+    // Normalize Rwanda fields
+    const normalizedDepartmentId = department_id || departmentId || null;
 
     const expense = new Expense({
       company: companyId,
@@ -237,6 +291,12 @@ exports.createExpense = async (req, res, next) => {
       recurringFrequency: recurringFrequency || "monthly",
       budget_id: budget_id || null,
       budget_line_id: budget_line_id || null,
+      // Rwanda-specific fields
+      department_id: normalizedDepartmentId,
+      rraTaxCategory,
+      currencyCode: currencyCode || 'RWF',
+      exchangeRate: exchangeRate || 1,
+      isVATRecoverable: isVATRecoverable !== undefined ? isVATRecoverable : true,
     });
 
     await expense.save();
@@ -400,7 +460,7 @@ exports.updateExpense = async (req, res, next) => {
     }
 
     // Don't allow changing company or createdBy
-    const { company, createdBy, bankAccountId, ...updateData } = req.body;
+    const { company, createdBy, bankAccountId, department_id, ...updateData } = req.body;
 
     // Check if expense is being marked as paid with bank transfer
     const isBeingPaid = updateData.paid === true && !expense.paid;
@@ -423,6 +483,14 @@ exports.updateExpense = async (req, res, next) => {
       } catch (err) {
         console.error("Error fetching bank account:", err);
       }
+    }
+
+    // Assign bank account and department to expense
+    if (bankAccountId) {
+      expense.bank_account_id = bankAccountId;
+    }
+    if (department_id) {
+      expense.department_id = department_id;
     }
 
     Object.assign(expense, updateData);
@@ -828,6 +896,7 @@ exports.approveExpense = async (req, res, next) => {
   try {
     const companyId = req.user.company._id;
     const expenseId = req.params.id;
+    const userId = req.user._id;
 
     const expense = await Expense.findOne({
       _id: expenseId,
@@ -849,16 +918,40 @@ exports.approveExpense = async (req, res, next) => {
         });
     }
 
+    // Segregation of Duties: Creator cannot approve their own expense
+    if (expense.posted_by?.toString() === userId.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: "Segregation of duties: You cannot approve your own expense. Another user must review and approve.",
+        code: "SEGREGATION_OF_DUTIES"
+      });
+    }
+
+    // Segregation of Duties: Same user cannot create and approve
+    if (expense.createdBy?.toString() === userId.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: "Segregation of duties: Expense creator cannot approve. Another user must review.",
+        code: "SEGREGATION_OF_DUTIES"
+      });
+    }
+
     expense.status = "approved";
-    expense.approvedBy = req.user._id;
+    expense.approvedBy = userId;
     expense.approvedAt = new Date();
 
-    // If the expense was paid on creation, we might want to post it now (create journal entries)
-    // Or we might want to wait for a separate "Post" action. For now, let's just mark it approved.
-    // If you want to auto-post upon approval:
-    // await postExpenseInternal(expense, req.user.id);
-
     await expense.save();
+
+    // Log the approval action
+    await AuditService.logExpenseAction({
+      companyId,
+      userId,
+      action: 'approved',
+      expenseId: expense._id,
+      changes: { status: 'approved', previousStatus: 'pending' },
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent']
+    });
 
     res.json({
       success: true,

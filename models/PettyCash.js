@@ -35,6 +35,13 @@ const pettyCashExpenseSchema = new mongoose.Schema(
     category: {
       type: String,
       enum: [
+        "office_stationery",
+        "travel_transport",
+        "meals_entertainment",
+        "maintenance_repairs",
+        "staff_welfare",
+        "marketing_sales",
+        "utilities_misc",
         "transport",
         "office_supplies",
         "meals",
@@ -48,7 +55,33 @@ const pettyCashExpenseSchema = new mongoose.Schema(
         "medical",
         "other",
       ],
-      default: "miscellaneous",
+      default: "office_stationery",
+    },
+    subcategory: {
+      type: String,
+      trim: true,
+    },
+    recipientType: {
+      type: String,
+      enum: ["staff", "client", "mixed", null],
+      default: null,
+    },
+    isTaxable: {
+      type: Boolean,
+      default: false,
+    },
+    isStaffAdvance: {
+      type: Boolean,
+      default: false,
+    },
+    staffAdvanceStatus: {
+      type: String,
+      enum: ["outstanding", "reconciled", "deducted_from_salary", null],
+      default: null,
+    },
+    purpose: {
+      type: String,
+      trim: true,
     },
     date: {
       type: Date,
@@ -59,6 +92,8 @@ const pettyCashExpenseSchema = new mongoose.Schema(
       name: String,
       url: String,
     },
+    receiptUploadUrl: String,
+    receiptUploadName: String,
     notes: String,
     // Voucher number for tracking (format: PCV-YYYY-NNNNN)
     voucherNumber: {

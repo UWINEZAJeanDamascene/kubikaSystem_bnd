@@ -1,6 +1,7 @@
 const mongoose = require("mongoose");
 const ChartOfAccount = require("../models/ChartOfAccount");
 const JournalEntry = require("../models/JournalEntry");
+const Loan = require("../models/Loan");
 const { aggregateWithTimeout } = require("../utils/mongoAggregation");
 const Company = require("../models/Company");
 const PLStatementService = require("./plStatementService");
@@ -78,6 +79,12 @@ class BalanceSheetService {
     // Interpret asOfDate as inclusive (end of day) so entries on that date are included
     const dateTo = new Date(asOfDate);
     dateTo.setHours(23, 59, 59, 999);
+
+    // Fetch loan maturity data for proper liability classification (IAS 1)
+    const loanMaturityData = await BalanceSheetService._getLoanMaturityData(
+      companyId,
+      dateTo,
+    );
 
     // Get all account balances up to asOfDate
     const accountBalances = await aggregateWithTimeout(JournalEntry, [
@@ -220,12 +227,69 @@ class BalanceSheetService {
         // VAT Input (2210) is liability type but debit-normal — it's a receivable, classify as current asset
         if (subtype === "vat_input" && account.normal_balance === "debit") {
           currentAssetLines.push(line);
-        } else if (subtype === "non_current") {
-          // Non-Current Liabilities: long-term loans
-          nonCurrentLiabilityLines.push(line);
+          continue;
+        }
+
+        // IAS 1: Classify liabilities as current or non-current based on maturity
+        const maturityData = loanMaturityData.get(account._id?.toString());
+
+        if (maturityData && (maturityData.dueWithin12Months > 0 || maturityData.dueAfter12Months > 0)) {
+          // This account has linked loans with maturity data - split between current and non-current
+          const totalBalance = Math.abs(line.amount);
+          const currentPortion = Math.min(maturityData.dueWithin12Months, totalBalance);
+          const nonCurrentPortion = totalBalance - currentPortion;
+
+          // Add current portion if significant (> 0.01)
+          if (currentPortion > 0.01) {
+            currentLiabilityLines.push({
+              ...line,
+              amount: line.amount >= 0 ? currentPortion : -currentPortion,
+              maturity_classification: "current",
+              due_within_12_months: maturityData.dueWithin12Months,
+              due_after_12_months: maturityData.dueAfter12Months,
+              loan_details: maturityData.loans.filter(l => l.isCurrent)
+            });
+          }
+
+          // Add non-current portion if significant (> 0.01)
+          if (nonCurrentPortion > 0.01) {
+            nonCurrentLiabilityLines.push({
+              ...line,
+              amount: line.amount >= 0 ? nonCurrentPortion : -nonCurrentPortion,
+              maturity_classification: "non_current",
+              due_within_12_months: maturityData.dueWithin12Months,
+              due_after_12_months: maturityData.dueAfter12Months,
+              loan_details: maturityData.loans.filter(l => !l.isCurrent)
+            });
+          }
+        } else if (subtype === "non_current" || subtype === "long_term_loan") {
+          // Explicit non-current subtype with no loan data - classify as non-current
+          nonCurrentLiabilityLines.push({
+            ...line,
+            maturity_classification: "non_current"
+          });
+        } else if (subtype === "current" || subtype === "short_term_loan") {
+          // Explicit current subtype - classify as current
+          currentLiabilityLines.push({
+            ...line,
+            maturity_classification: "current"
+          });
         } else {
-          // Current Liabilities: everything else (current, ap, tax payables, accruals)
-          currentLiabilityLines.push(line);
+          // Default: check account code range for loans (typically 2100-2199 current, 2200-2299 non-current)
+          const codeNum = Number(account.code);
+          if (!Number.isNaN(codeNum) && codeNum >= 2200 && codeNum < 2300) {
+            // Loan accounts in 2200-2299 range - default to non-current if no maturity data
+            nonCurrentLiabilityLines.push({
+              ...line,
+              maturity_classification: "non_current_assumed"
+            });
+          } else {
+            // Everything else (AP, tax, accruals, etc.) - current liability
+            currentLiabilityLines.push({
+              ...line,
+              maturity_classification: "current"
+            });
+          }
         }
       } else if (type === "equity") {
         // Exclude 3200 (Current Period Profit) — it is already injected into Retained
@@ -355,6 +419,60 @@ class BalanceSheetService {
       // P&L integration
       current_period_net_profit: round(currentPeriodNetProfit),
     };
+  }
+
+  /**
+   * Get loan maturity data for liability accounts to determine current vs non-current split
+   * @param {string} companyId - Company ID
+   * @param {Date} asOfDate - Balance sheet date
+   * @returns {Map<string, {dueWithin12Months: number, dueAfter12Months: number, loans: Array}>}
+   */
+  static async _getLoanMaturityData(companyId, asOfDate) {
+    const twelveMonthsLater = new Date(asOfDate);
+    twelveMonthsLater.setMonth(twelveMonthsLater.getMonth() + 12);
+
+    // Get all active loans for this company
+    const loans = await Loan.find({
+      company: new mongoose.Types.ObjectId(companyId),
+      status: { $in: ['active', 'short-term', 'long-term'] },
+      outstandingBalance: { $gt: 0 }
+    }).lean();
+
+    const maturityMap = new Map();
+
+    for (const loan of loans) {
+      const liabilityAccountId = loan.liabilityAccountId?.toString();
+      if (!liabilityAccountId) continue;
+
+      if (!maturityMap.has(liabilityAccountId)) {
+        maturityMap.set(liabilityAccountId, {
+          dueWithin12Months: 0,
+          dueAfter12Months: 0,
+          loans: []
+        });
+      }
+
+      const data = maturityMap.get(liabilityAccountId);
+      const endDate = loan.endDate ? new Date(loan.endDate) : null;
+      const outstandingBalance = loan.outstandingBalance || 0;
+
+      // Determine if loan matures within 12 months of balance sheet date
+      if (endDate && endDate <= twelveMonthsLater) {
+        data.dueWithin12Months += outstandingBalance;
+      } else {
+        data.dueAfter12Months += outstandingBalance;
+      }
+
+      data.loans.push({
+        loanNumber: loan.loanNumber,
+        name: loan.name,
+        endDate: loan.endDate,
+        outstandingBalance: outstandingBalance,
+        isCurrent: endDate ? endDate <= twelveMonthsLater : false
+      });
+    }
+
+    return maturityMap;
   }
 
   /**

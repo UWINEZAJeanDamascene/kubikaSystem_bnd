@@ -1,9 +1,162 @@
 const mongoose = require("mongoose");
 const { aggregateWithTimeout } = require("../utils/mongoAggregation");
 
+// Bank Reconciliation Session Schema (real-world reconciliation tracking)
+const bankReconciliationSchema = new mongoose.Schema(
+  {
+    bankAccount: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "BankAccount",
+      required: true,
+      index: true,
+    },
+    company: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Company",
+      required: true,
+      index: true,
+    },
+    // Statement period
+    statementDateStart: {
+      type: Date,
+      required: true,
+    },
+    statementDateEnd: {
+      type: Date,
+      required: true,
+    },
+    // Closing balance from the bank statement
+    statementClosingBalance: {
+      type: mongoose.Schema.Types.Decimal128,
+      required: true,
+      get: function (value) {
+        return value ? parseFloat(value.toString()) : 0;
+      },
+    },
+    // Book balance at the start of this reconciliation (computed from journal)
+    bookClosingBalance: {
+      type: mongoose.Schema.Types.Decimal128,
+      required: false,
+      default: null,
+      get: function (value) {
+        return value ? parseFloat(value.toString()) : 0;
+      },
+    },
+    // Difference at completion time (must be zero)
+    difference: {
+      type: mongoose.Schema.Types.Decimal128,
+      default: mongoose.Types.Decimal128.fromString("0"),
+      get: function (value) {
+        return value ? parseFloat(value.toString()) : 0;
+      },
+    },
+    // Status of this reconciliation session
+    status: {
+      type: String,
+      enum: ["draft", "in_progress", "completed", "cancelled"],
+      default: "draft",
+      index: true,
+    },
+    // Who started and completed
+    startedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+    },
+    completedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+    startedAt: {
+      type: Date,
+      default: Date.now,
+    },
+    completedAt: {
+      type: Date,
+      default: null,
+    },
+    // Reconciliation report data (snapshot at completion)
+    reportSnapshot: {
+      beginningBookBalance: {
+        type: mongoose.Schema.Types.Decimal128,
+        default: null,
+        get: function (value) {
+          return value ? parseFloat(value.toString()) : 0;
+        },
+      },
+      totalDepositsPerBooks: {
+        type: mongoose.Schema.Types.Decimal128,
+        default: null,
+        get: function (value) {
+          return value ? parseFloat(value.toString()) : 0;
+        },
+      },
+      totalChecksPerBooks: {
+        type: mongoose.Schema.Types.Decimal128,
+        default: null,
+        get: function (value) {
+          return value ? parseFloat(value.toString()) : 0;
+        },
+      },
+      endingBookBalance: {
+        type: mongoose.Schema.Types.Decimal128,
+        default: null,
+        get: function (value) {
+          return value ? parseFloat(value.toString()) : 0;
+        },
+      },
+      outstandingDeposits: {
+        type: mongoose.Schema.Types.Decimal128,
+        default: null,
+        get: function (value) {
+          return value ? parseFloat(value.toString()) : 0;
+        },
+      },
+      outstandingChecks: {
+        type: mongoose.Schema.Types.Decimal128,
+        default: null,
+        get: function (value) {
+          return value ? parseFloat(value.toString()) : 0;
+        },
+      },
+      adjustingEntriesTotal: {
+        type: mongoose.Schema.Types.Decimal128,
+        default: null,
+        get: function (value) {
+          return value ? parseFloat(value.toString()) : 0;
+        },
+      },
+      statementLinesCount: { type: Number, default: 0 },
+      matchedCount: { type: Number, default: 0 },
+      unmatchedStatementCount: { type: Number, default: 0 },
+      unmatchedJournalCount: { type: Number, default: 0 },
+    },
+    notes: {
+      type: String,
+      maxlength: 500,
+      default: null,
+    },
+  },
+  {
+    timestamps: { createdAt: "createdAt", updatedAt: "updatedAt" },
+  },
+);
+
+bankReconciliationSchema.index({ bankAccount: 1, status: 1 });
+bankReconciliationSchema.index({ bankAccount: 1, statementDateEnd: -1 });
+bankReconciliationSchema.index({ company: 1, status: 1 });
+
 // Bank Statement Line Schema (for reconciliation)
 const bankStatementLineSchema = new mongoose.Schema(
   {
+    // Reconciliation session reference (null until assigned to a session)
+    reconciliationId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "BankReconciliation",
+      default: null,
+      index: true,
+    },
     // Bank account reference
     bankAccount: {
       type: mongoose.Schema.Types.ObjectId,
@@ -53,6 +206,13 @@ const bankStatementLineSchema = new mongoose.Schema(
       maxlength: 150,
       default: null,
     },
+    // Status: unmatched, matched, ignored
+    status: {
+      type: String,
+      enum: ["unmatched", "matched", "ignored"],
+      default: "unmatched",
+      index: true,
+    },
     // Is reconciled - TRUE when SUM(matched amounts) = statement line amount (exact match)
     isReconciled: {
       type: Boolean,
@@ -85,9 +245,48 @@ const bankStatementLineSchema = new mongoose.Schema(
   },
 );
 
+// Transform to convert Decimal128 fields to numbers for JSON serialization
+bankStatementLineSchema.set("toJSON", {
+  transform: function (doc, ret) {
+    if (ret.debitAmount && ret.debitAmount.$numberDecimal) {
+      ret.debitAmount = parseFloat(ret.debitAmount.$numberDecimal);
+    }
+    if (ret.creditAmount && ret.creditAmount.$numberDecimal) {
+      ret.creditAmount = parseFloat(ret.creditAmount.$numberDecimal);
+    }
+    if (ret.balance && ret.balance.$numberDecimal) {
+      ret.balance = parseFloat(ret.balance.$numberDecimal);
+    }
+    if (ret.matchedAmount && ret.matchedAmount.$numberDecimal) {
+      ret.matchedAmount = parseFloat(ret.matchedAmount.$numberDecimal);
+    }
+    return ret;
+  },
+});
+
+bankStatementLineSchema.set("toObject", {
+  transform: function (doc, ret) {
+    if (ret.debitAmount && ret.debitAmount.$numberDecimal) {
+      ret.debitAmount = parseFloat(ret.debitAmount.$numberDecimal);
+    }
+    if (ret.creditAmount && ret.creditAmount.$numberDecimal) {
+      ret.creditAmount = parseFloat(ret.creditAmount.$numberDecimal);
+    }
+    if (ret.balance && ret.balance.$numberDecimal) {
+      ret.balance = parseFloat(ret.balance.$numberDecimal);
+    }
+    if (ret.matchedAmount && ret.matchedAmount.$numberDecimal) {
+      ret.matchedAmount = parseFloat(ret.matchedAmount.$numberDecimal);
+    }
+    return ret;
+  },
+});
+
 // Index for reconciliation queries
 bankStatementLineSchema.index({ bankAccount: 1, transactionDate: 1 });
 bankStatementLineSchema.index({ bankAccount: 1, isReconciled: 1 });
+bankStatementLineSchema.index({ bankAccount: 1, status: 1 });
+bankStatementLineSchema.index({ reconciliationId: 1, status: 1 });
 
 // Bank Reconciliation Match Junction Table Schema
 // Supports many-to-one and one-to-many matching
@@ -831,10 +1030,11 @@ const BankAccount = mongoose.model("BankAccount", bankAccountSchema);
 mongoose.model("BankTransaction", bankTransactionSchema);
 mongoose.model("BankStatementLine", bankStatementLineSchema);
 mongoose.model("BankReconciliationMatch", bankReconciliationMatchSchema);
+mongoose.model("BankReconciliation", bankReconciliationSchema);
 
 // Export BankAccount as the module default (consistent with other models)
 // Also attach related models as properties so callers can destructure:
-// const { BankAccount, BankTransaction, BankStatementLine, BankReconciliationMatch } = require('../models/BankAccount')
+// const { BankAccount, BankTransaction, BankStatementLine, BankReconciliationMatch, BankReconciliation } = require('../models/BankAccount')
 module.exports = BankAccount;
 module.exports.BankAccount = BankAccount;
 module.exports.BankTransaction = mongoose.model("BankTransaction");
@@ -842,3 +1042,4 @@ module.exports.BankStatementLine = mongoose.model("BankStatementLine");
 module.exports.BankReconciliationMatch = mongoose.model(
   "BankReconciliationMatch",
 );
+module.exports.BankReconciliation = mongoose.model("BankReconciliation");

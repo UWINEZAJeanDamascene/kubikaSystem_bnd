@@ -665,6 +665,329 @@ class BudgetService {
     return saved;
   }
 
+  // ── SCENARIOS / WHAT-IF ANALYSIS ─────────────────────────────────────
+
+  /**
+   * Create a new scenario based on an existing budget
+   * @param {string} companyId - Company ID
+   * @param {string} budgetId - Source budget ID
+   * @param {string} userId - User creating the scenario
+   * @param {Object} scenarioData - Scenario configuration
+   * @returns {Promise<Budget>} New scenario budget
+   */
+  static async createScenario(companyId, budgetId, userId, { scenario_type, scenario_name, adjustments, notes }) {
+    const source = await Budget.findOne({ _id: budgetId, company_id: companyId });
+
+    if (!source) {
+      throw new Error('NOT_FOUND');
+    }
+
+    // Generate scenario group ID if this is the first scenario
+    const scenarioGroupId = source.scenario_group_id || `scenario_${budgetId}_${Date.now()}`;
+
+    // Update source to be part of scenario group if not already
+    if (!source.scenario_group_id) {
+      await Budget.findByIdAndUpdate(budgetId, {
+        scenario_group_id: scenarioGroupId,
+        is_primary_scenario: true,
+        scenario_type: 'base'
+      });
+    }
+
+    // Calculate adjusted amount based on percentage adjustments
+    let adjustedAmount = Number(source.amount.toString());
+    if (adjustments && adjustments.amount_adjustment_percent) {
+      adjustedAmount = adjustedAmount * (1 + adjustments.amount_adjustment_percent / 100);
+    }
+
+    // Generate unique name for scenario
+    const scenarioDisplayName = scenario_name || this._getDefaultScenarioName(scenario_type);
+    const uniqueScenarioName = `${source.name} - ${scenarioDisplayName}`;
+
+    // Check if scenario with this name already exists
+    const existingScenario = await Budget.findOne({
+      company_id: companyId,
+      fiscal_year: source.fiscal_year,
+      name: uniqueScenarioName
+    });
+
+    if (existingScenario) {
+      throw new Error('SCENARIO_EXISTS');
+    }
+
+    const newScenario = new Budget({
+      company_id: companyId,
+      name: uniqueScenarioName,
+      description: source.description,
+      type: source.type,
+      fiscal_year: source.fiscal_year,
+      periodStart: source.periodStart,
+      periodEnd: source.periodEnd,
+      periodType: source.periodType,
+      department: source.department,
+      notes: notes || source.notes,
+      amount: adjustedAmount,
+      status: 'draft',
+      created_by: userId,
+      scenario_type: scenario_type,
+      scenario_name: scenario_name || this._getDefaultScenarioName(scenario_type),
+      scenario_group_id: scenarioGroupId,
+      is_primary_scenario: false,
+      parent_budget_id: budgetId,
+      scenario_description: notes || ''
+    });
+
+    const saved = await newScenario.save();
+
+    // Clone and adjust budget lines
+    const sourceLines = await BudgetLine.find({
+      company_id: companyId,
+      budget_id: budgetId
+    }).lean();
+
+    if (sourceLines.length > 0) {
+      const scenarioLines = sourceLines.map(line => {
+        let adjustedLineAmount = Number(line.budgeted_amount.toString());
+
+        // Apply line-level adjustments if specified
+        if (adjustments) {
+          if (adjustments.line_adjustment_percent) {
+            adjustedLineAmount = adjustedLineAmount * (1 + adjustments.line_adjustment_percent / 100);
+          }
+          // Category-specific adjustments
+          if (adjustments.category_adjustments && line.category) {
+            const catAdjustment = adjustments.category_adjustments[line.category];
+            if (catAdjustment) {
+              adjustedLineAmount = adjustedLineAmount * (1 + catAdjustment / 100);
+            }
+          }
+        }
+
+        return {
+          company_id: companyId,
+          budget_id: saved._id,
+          account_id: line.account_id,
+          category: line.category,
+          period_month: line.period_month,
+          period_year: line.period_year,
+          budgeted_amount: adjustedLineAmount,
+          notes: line.notes
+        };
+      });
+
+      await BudgetLine.insertMany(scenarioLines);
+    }
+
+    return saved;
+  }
+
+  /**
+   * Get default scenario name based on type
+   * @private
+   */
+  static _getDefaultScenarioName(scenarioType) {
+    const names = {
+      base: 'Base Case',
+      optimistic: 'Optimistic Scenario',
+      pessimistic: 'Pessimistic Scenario',
+      custom: 'Custom Scenario'
+    };
+    return names[scenarioType] || 'Unknown Scenario';
+  }
+
+  /**
+   * Get all scenarios for a budget group
+   * @param {string} companyId - Company ID
+   * @param {string} budgetId - Any budget in the scenario group
+   * @returns {Promise<Array>} All scenarios in the group
+   */
+  static async getScenarios(companyId, budgetId) {
+    const budget = await Budget.findOne({ _id: budgetId, company_id: companyId });
+
+    if (!budget) {
+      throw new Error('NOT_FOUND');
+    }
+
+    // If budget has no scenario group, return just this budget as base scenario
+    if (!budget.scenario_group_id) {
+      return [{
+        ...budget.toObject(),
+        scenario_type: 'base',
+        is_primary_scenario: true,
+        scenario_name: 'Base Case'
+      }];
+    }
+
+    // Get all budgets in the scenario group
+    const scenarios = await Budget.find({
+      company_id: companyId,
+      scenario_group_id: budget.scenario_group_id
+    }).sort({ scenario_type: 1 }).lean();
+
+    return scenarios;
+  }
+
+  /**
+   * Compare multiple scenarios
+   * @param {string} companyId - Company ID
+   * @param {Array<string>} scenarioIds - Array of scenario budget IDs to compare
+   * @returns {Promise<Object>} Comparison data
+   */
+  static async compareScenarios(companyId, scenarioIds) {
+    if (!scenarioIds || scenarioIds.length < 2) {
+      throw new Error('MINIMUM_2_SCENARIOS_REQUIRED');
+    }
+
+    const scenarios = await Budget.find({
+      _id: { $in: scenarioIds },
+      company_id: companyId
+    }).lean();
+
+    if (scenarios.length !== scenarioIds.length) {
+      throw new Error('NOT_FOUND');
+    }
+
+    // Get lines for all scenarios
+    const scenarioData = await Promise.all(scenarios.map(async (scenario) => {
+      const lines = await BudgetLine.find({
+        company_id: companyId,
+        budget_id: scenario._id
+      }).lean();
+
+      const totalBudgeted = lines.reduce((sum, l) => sum + Number(l.budgeted_amount.toString()), 0);
+
+      // Group by category
+      const byCategory = {};
+      lines.forEach(line => {
+        const cat = line.category || 'Uncategorized';
+        if (!byCategory[cat]) {
+          byCategory[cat] = 0;
+        }
+        byCategory[cat] += Number(line.budgeted_amount.toString());
+      });
+
+      // Group by month
+      const byMonth = {};
+      lines.forEach(line => {
+        const key = `${line.period_year}-${String(line.period_month).padStart(2, '0')}`;
+        if (!byMonth[key]) {
+          byMonth[key] = 0;
+        }
+        byMonth[key] += Number(line.budgeted_amount.toString());
+      });
+
+      return {
+        scenario_id: scenario._id,
+        scenario_type: scenario.scenario_type,
+        scenario_name: scenario.scenario_name,
+        is_primary: scenario.is_primary_scenario,
+        total_amount: Number(scenario.amount.toString()),
+        total_budgeted: totalBudgeted,
+        line_count: lines.length,
+        by_category: byCategory,
+        by_month: byMonth
+      };
+    }));
+
+    // Calculate variances between scenarios
+    const baseScenario = scenarioData.find(s => s.is_primary) || scenarioData[0];
+    const comparisons = scenarioData.map(scenario => {
+      if (scenario.scenario_id === baseScenario.scenario_id) {
+        return { ...scenario, variance_percent: 0, variance_amount: 0 };
+      }
+
+      const varianceAmount = scenario.total_budgeted - baseScenario.total_budgeted;
+      const variancePercent = baseScenario.total_budgeted !== 0
+        ? (varianceAmount / baseScenario.total_budgeted) * 100
+        : 0;
+
+      return {
+        ...scenario,
+        variance_percent: variancePercent,
+        variance_amount: varianceAmount
+      };
+    });
+
+    return {
+      base_scenario: baseScenario,
+      scenarios: comparisons,
+      summary: {
+        total_scenarios: scenarios.length,
+        max_amount: Math.max(...scenarioData.map(s => s.total_budgeted)),
+        min_amount: Math.min(...scenarioData.map(s => s.total_budgeted)),
+        avg_amount: scenarioData.reduce((sum, s) => sum + s.total_budgeted, 0) / scenarioData.length
+      }
+    };
+  }
+
+  /**
+   * Set a scenario as the primary (active) scenario
+   * @param {string} companyId - Company ID
+   * @param {string} scenarioId - Scenario budget ID to set as primary
+   * @param {string} userId - User making the change
+   * @returns {Promise<Budget>} Updated scenario
+   */
+  static async setPrimaryScenario(companyId, scenarioId, userId) {
+    const scenario = await Budget.findOne({ _id: scenarioId, company_id: companyId });
+
+    if (!scenario) {
+      throw new Error('NOT_FOUND');
+    }
+
+    if (!scenario.scenario_group_id) {
+      throw new Error('NOT_A_SCENARIO');
+    }
+
+    // Unset primary from all scenarios in the group
+    await Budget.updateMany(
+      {
+        company_id: companyId,
+        scenario_group_id: scenario.scenario_group_id
+      },
+      { is_primary_scenario: false }
+    );
+
+    // Set this scenario as primary
+    scenario.is_primary_scenario = true;
+    await scenario.save();
+
+    return scenario;
+  }
+
+  /**
+   * Delete a scenario
+   * @param {string} companyId - Company ID
+   * @param {string} scenarioId - Scenario budget ID to delete
+   * @param {string} userId - User deleting
+   * @returns {Promise<Object>} Deletion result
+   */
+  static async deleteScenario(companyId, scenarioId, userId) {
+    const scenario = await Budget.findOne({ _id: scenarioId, company_id: companyId });
+
+    if (!scenario) {
+      throw new Error('NOT_FOUND');
+    }
+
+    if (!scenario.scenario_group_id) {
+      throw new Error('NOT_A_SCENARIO');
+    }
+
+    if (scenario.is_primary_scenario) {
+      throw new Error('CANNOT_DELETE_PRIMARY_SCENARIO');
+    }
+
+    // Delete all budget lines for this scenario
+    await BudgetLine.deleteMany({
+      company_id: companyId,
+      budget_id: scenarioId
+    });
+
+    // Delete the scenario budget
+    await Budget.findByIdAndDelete(scenarioId);
+
+    return { deleted: true, scenario_id: scenarioId };
+  }
+
   // ── SUMMARY ──────────────────────────────────────────────────────────
   static async getSummary(companyId) {
     const budgets = await Budget.find({

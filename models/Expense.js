@@ -72,6 +72,33 @@ const expenseSchema = new mongoose.Schema({
     required: true
   },
 
+  // Currency fields - RWF as functional currency (Rwanda context)
+  currencyCode: {
+    type: String,
+    default: 'RWF',  // Rwanda Franc as default functional currency
+    enum: ['RWF', 'USD', 'EUR', 'GBP', 'UGX', 'KES', 'TZS'],  // Common regional currencies
+    required: true
+  },
+  exchangeRate: {
+    type: Number,
+    default: 1,  // 1 for RWF, calculated for foreign currencies
+    min: 0
+  },
+  amountInRWF: {
+    type: Number,
+    min: 0.01
+    // Auto-calculated in pre-save hook based on amount and exchangeRate
+  },
+  taxAmountInRWF: {
+    type: Number,
+    default: 0
+    // Auto-calculated in pre-save hook
+  },
+  totalAmountInRWF: {
+    type: Number
+    // Auto-calculated in pre-save hook
+  },
+
   // Tax account for input VAT
   tax_account_id: {
     type: mongoose.Schema.Types.ObjectId,
@@ -99,6 +126,52 @@ const expenseSchema = new mongoose.Schema({
     ref: 'PettyCashFloat',
     default: null
   },
+
+  // RRA Tax Categories - Rwanda-specific tax compliance
+  rraTaxCategory: {
+    type: String,
+    enum: [
+      'vat_standard',      // 18% VAT - standard rate
+      'vat_exempt',        // No VAT (education, healthcare, etc.)
+      'vat_zero',          // 0% VAT (exports)
+      'wht_15_services',   // 15% withholding - services
+      'wht_30_dividends',  // 30% withholding - dividends
+      'wht_10_interest',   // 10% withholding - interest
+      'reverse_charge',    // Reverse charge mechanism
+      'not_taxable'        // Outside scope
+    ],
+    default: 'vat_standard'
+  },
+  rraTaxTransactionId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'TaxTransaction',
+    default: null
+  },
+  isVATRecoverable: {
+    type: Boolean,
+    default: true  // Most business expenses recoverable
+  },
+
+  // Department / Cost Center allocation
+  department_id: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Department',
+    default: null
+  },
+  departmentAllocations: [{
+    department_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Department',
+      required: true
+    },
+    percentage: {
+      type: Number,
+      min: 0,
+      max: 100,
+      required: true
+    },
+    amount: Number  // Calculated amount for this department
+  }],
 
   // Budget reference (for budget tracking and encumbrances)
   budget_id: {
@@ -277,14 +350,36 @@ expenseSchema.index({ company: 1, expense_account_id: 1 });
 expenseSchema.index({ company: 1, payment_method: 1 });
 expenseSchema.index({ company: 1, type: 1 });
 expenseSchema.index({ company: 1, status: 1 });
+// Rwanda-specific indexes
+expenseSchema.index({ company: 1, currencyCode: 1 });  // For multi-currency reporting
+expenseSchema.index({ company: 1, department_id: 1 });  // For department reporting
+expenseSchema.index({ company: 1, rraTaxCategory: 1 });  // For tax reporting
 
 // Auto-generate reference number
 expenseSchema.pre('save', async function(next) {
+  // Check immutability for posted expenses
+  if (!this.isNew && this.isModified()) {
+    const original = await this.constructor.findById(this._id).lean();
+    if (original && original.status === 'posted') {
+      // Only allow specific fields to be modified on posted expenses
+      const allowedModifications = ['status', 'reversal_journal_entry_id', 'updatedAt'];
+      const isOnlyAllowedChanges = this.modifiedPaths().every(path =>
+        allowedModifications.includes(path) || path.startsWith('reversal')
+      );
+
+      if (!isOnlyAllowedChanges && this.status !== 'reversed') {
+        const error = new Error('POSTED_EXPENSE_IMMUTABLE: Posted expenses cannot be modified. Use reversal instead.');
+        error.code = 'POSTED_EXPENSE_IMMUTABLE';
+        return next(error);
+      }
+    }
+  }
+
   if (this.isNew && !this.reference_no) {
     const count = await mongoose.model('Expense').countDocuments({ company: this.company });
     this.reference_no = `EXP-${String(count + 1).padStart(5, '0')}`;
   }
-  
+
   // Set period from expense_date
   if (this.expense_date) {
     const year = this.expense_date.getFullYear();
@@ -296,14 +391,45 @@ expenseSchema.pre('save', async function(next) {
   if (this.isNew && !this.total_amount && this.amount !== undefined) {
     this.total_amount = this.amount + (this.tax_amount || 0);
   }
-  
+
+  // Calculate RWF amounts for Rwanda functional currency
+  if (this.isNew || this.isModified('amount') || this.isModified('tax_amount') || this.isModified('exchangeRate') || this.isModified('currencyCode')) {
+    // Set defaults
+    if (!this.currencyCode) this.currencyCode = 'RWF';
+    if (!this.exchangeRate || this.exchangeRate <= 0) {
+      this.exchangeRate = this.currencyCode === 'RWF' ? 1 : (this.exchangeRate || 1);
+    }
+
+    // Calculate RWF amounts
+    if (this.currencyCode === 'RWF') {
+      this.exchangeRate = 1;
+      this.amountInRWF = this.amount;
+      this.taxAmountInRWF = this.tax_amount || 0;
+      this.totalAmountInRWF = this.total_amount || (this.amount + (this.tax_amount || 0));
+    } else {
+      // Foreign currency conversion
+      this.amountInRWF = Math.round(this.amount * this.exchangeRate * 100) / 100;
+      this.taxAmountInRWF = Math.round((this.tax_amount || 0) * this.exchangeRate * 100) / 100;
+      this.totalAmountInRWF = this.amountInRWF + this.taxAmountInRWF;
+    }
+  }
+
+  // Calculate department allocation amounts if percentage provided
+  if (this.departmentAllocations && this.departmentAllocations.length > 0) {
+    this.departmentAllocations.forEach(alloc => {
+      if (alloc.percentage && !alloc.amount) {
+        alloc.amount = Math.round(this.amountInRWF * (alloc.percentage / 100) * 100) / 100;
+      }
+    });
+  }
+
   // Sync legacy fields
   if (this.isNew) {
     if (!this.expenseNumber) this.expenseNumber = this.reference_no;
     if (!this.expenseDate) this.expenseDate = this.expense_date;
     if (!this.createdBy) this.createdBy = this.posted_by;
   }
-  
+
   next();
 });
 

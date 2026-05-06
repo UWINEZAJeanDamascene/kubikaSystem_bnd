@@ -350,4 +350,74 @@ router.post(
   budgetController.rollbackToRevision,
 );
 
+// ── Import/Export ───────────────────────────────────────────────────────
+const multer = require("multer");
+const upload = multer({ storage: multer.memoryStorage() });
+
+// Download import template
+router.get(
+  "/import/template",
+  authorize("budgets", "read"),
+  budgetController.downloadImportTemplate,
+);
+
+// Parse import file (step 1: upload and parse)
+router.post(
+  "/import/parse",
+  authorize("budgets", "create"),
+  upload.single("file"),
+  budgetController.parseImport,
+);
+
+// Validate import data (step 2: validate against database)
+router.post(
+  "/import/validate",
+  authorize("budgets", "create"),
+  budgetController.validateImport,
+);
+
+// Execute import (step 3: save to database)
+router.post(
+  "/import/execute",
+  authorize("budgets", "create"),
+  budgetController.executeImport,
+);
+
+// ── BUDGET SCENARIOS / WHAT-IF ANALYSIS ────────────────────────────────
+
+// Get all scenarios for a budget
+router.get(
+  "/:id/scenarios",
+  authorize("budgets", "read"),
+  budgetController.getScenarios,
+);
+
+// Create a new scenario from an existing budget
+router.post(
+  "/:id/scenarios",
+  authorize("budgets", "create"),
+  budgetController.createScenario,
+);
+
+// Compare multiple scenarios
+router.post(
+  "/scenarios/compare",
+  authorize("budgets", "read"),
+  budgetController.compareScenarios,
+);
+
+// Set a scenario as primary
+router.post(
+  "/scenarios/:scenarioId/set-primary",
+  authorize("budgets", "update"),
+  budgetController.setPrimaryScenario,
+);
+
+// Delete a scenario
+router.delete(
+  "/scenarios/:scenarioId",
+  authorize("budgets", "delete"),
+  budgetController.deleteScenario,
+);
+
 module.exports = router;

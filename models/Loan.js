@@ -182,7 +182,145 @@ const loanSchema = new mongoose.Schema({
   // Security/collateral
   collateral: String,
   notes: String,
-  
+
+  // IFRS 7 / IAS 1 Disclosure Requirements
+  // Security classification (IFRS 7.33)
+  isSecured: {
+    type: Boolean,
+    default: false
+  },
+  securityDescription: {
+    type: String,
+    trim: true
+  },
+
+  // Loan classification for disclosure (IFRS 7.33)
+  classification: {
+    type: String,
+    enum: ['bank_loan', 'bond', 'finance_lease', 'related_party', 'other'],
+    default: 'bank_loan'
+  },
+
+  // Related party details (IAS 24)
+  relatedPartyId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Client',
+    default: null
+  },
+  relatedPartyName: {
+    type: String,
+    trim: true
+  },
+
+  // Currency (IFRS 7.34)
+  currencyCode: {
+    type: String,
+    enum: ['RWF', 'USD', 'EUR', 'GBP', 'UGX', 'KES', 'TZS'],
+    default: 'RWF'
+  },
+  exchangeRate: {
+    type: Number,
+    default: 1
+  },
+
+  // Covenant tracking (IAS 1.74)
+  hasCovenants: {
+    type: Boolean,
+    default: false
+  },
+  covenantDetails: {
+    type: String,
+    trim: true
+  },
+  covenantBreach: {
+    type: Boolean,
+    default: false
+  },
+  covenantBreachDate: Date,
+
+  // IFRS 9 - Classification and Measurement
+  ifrs9Classification: {
+    type: String,
+    enum: ['amortized_cost', 'fvoci', 'fvtpl'],
+    default: 'amortized_cost',
+    description: 'IFRS 9 business model classification'
+  },
+
+  // IFRS 9 - Impairment (Expected Credit Loss Model)
+  impairmentStage: {
+    type: String,
+    enum: ['stage_1', 'stage_2', 'stage_3'],
+    default: 'stage_1',
+    description: 'ECL stage: 1=12-month ECL, 2=lifetime ECL, 3=credit-impaired'
+  },
+  eclProvision: {
+    type: Number,
+    default: 0,
+    min: 0,
+    description: 'Expected Credit Loss provision amount'
+  },
+  probabilityOfDefault: {
+    type: Number,
+    default: 0,
+    min: 0,
+    max: 100,
+    description: 'Probability of Default (PD) percentage'
+  },
+  lossGivenDefault: {
+    type: Number,
+    default: 45,
+    min: 0,
+    max: 100,
+    description: 'Loss Given Default (LGD) percentage'
+  },
+  exposureAtDefault: {
+    type: Number,
+    default: 0,
+    min: 0,
+    description: 'Exposure at Default (EAD)'
+  },
+  effectiveInterestRate: {
+    type: Number,
+    default: 0,
+    min: 0,
+    description: 'Effective Interest Rate (EIR) for amortized cost calculation'
+  },
+  significantIncreaseInCreditRisk: {
+    type: Boolean,
+    default: false,
+    description: 'SICR flag for Stage 2 migration'
+  },
+  creditRiskAssessedAt: {
+    type: Date,
+    description: 'Last date credit risk was assessed'
+  },
+  daysPastDue: {
+    type: Number,
+    default: 0,
+    min: 0,
+    description: 'Days Past Due (DPD) for staging'
+  },
+  forbearanceStatus: {
+    type: String,
+    enum: ['none', 'temporary', 'permanent'],
+    default: 'none',
+    description: 'Forbearance/restructuring status'
+  },
+  defaultDate: {
+    type: Date,
+    description: 'Date of default (Stage 3 entry)'
+  },
+  writeOffAmount: {
+    type: Number,
+    default: 0,
+    min: 0,
+    description: 'Amount written off'
+  },
+  writeOffDate: {
+    type: Date,
+    description: 'Date of write-off'
+  },
+
   // User tracking
   createdBy: {
     type: mongoose.Schema.Types.ObjectId,

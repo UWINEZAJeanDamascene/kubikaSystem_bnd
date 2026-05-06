@@ -17,6 +17,70 @@ const {
 } = require("../constants/chartOfAccounts");
 const mongoose = require("mongoose");
 
+// Helper: map petty cash category to default GL account code
+function getDefaultExpenseAccount(category, subcategory = "") {
+  const sub = (subcategory || "").toLowerCase().trim();
+  switch (category) {
+    case "office_stationery":
+    case "office_supplies":
+      return DEFAULT_ACCOUNTS.officeSupplies || "5610";
+    case "travel_transport":
+    case "transport":
+      // Use Travel & Local Transport (5650) for parking, taxi, fuel, etc.
+      // Use Transport & Delivery (5700) for courier, delivery, freight
+      if (sub.includes("parking") || sub.includes("taxi") || sub.includes("moto") || sub.includes("fuel") || sub.includes("bus") || sub === "parking" || sub === "taxi_moto" || sub === "fuel" || sub === "bus_transport") {
+        return DEFAULT_ACCOUNTS.travelAndTransport || "5650";
+      }
+      if (sub.includes("courier") || sub.includes("delivery") || sub.includes("freight") || sub.includes("shipping")) {
+        return DEFAULT_ACCOUNTS.transport || "5700";
+      }
+      // Default to travel account for general transport expenses
+      return DEFAULT_ACCOUNTS.travelAndTransport || "5650";
+    case "meals_entertainment":
+    case "meals":
+    case "refreshments":
+      return DEFAULT_ACCOUNTS.staffWelfareAndEntertainment || "5930";
+    case "maintenance_repairs":
+    case "maintenance":
+      return DEFAULT_ACCOUNTS.repairsAndMaintenance || "5710";
+    case "staff_welfare":
+    case "medical":
+      return DEFAULT_ACCOUNTS.staffWelfareAndEntertainment || "5930";
+    case "marketing_sales":
+      return DEFAULT_ACCOUNTS.marketing || "5850";
+    case "utilities_misc":
+    case "utilities":
+    case "communications":
+      // Check for MoMo fees by keyword or subcategory code from dropdown
+      if (sub.includes("momo") || sub.includes("mobile money") || sub === "momo_fees") {
+        return DEFAULT_ACCOUNTS.mobileMoneyFees || "5920";
+      }
+      // Check for utilities by keyword or subcategory code
+      if (sub.includes("utilities") || sub.includes("airtime") || sub.includes("internet") || sub === "airtime") {
+        return DEFAULT_ACCOUNTS.utilities || "5600";
+      }
+      return DEFAULT_ACCOUNTS.miscellaneousExpenses || "5910";
+    case "miscellaneous":
+    case "other":
+    default:
+      return DEFAULT_ACCOUNTS.miscellaneousExpenses || "5910";
+  }
+}
+
+// Helper to build warnings for specific categories
+function buildExpenseWarnings(float, category, amount) {
+  const warnings = [];
+  const limit = float?.floatAmount || 0;
+  if (category === "maintenance_repairs" || category === "maintenance") {
+    if (limit > 0 && amount >= limit * 0.5) {
+      warnings.push(
+        "This maintenance expense is large relative to the petty cash float. Consider routing through a purchase order instead."
+      );
+    }
+  }
+  return warnings;
+}
+
 // Helper to get current balance (computed from transactions)
 async function getCurrentBalance(floatId) {
   const float = await PettyCashFloat.findById(floatId);
@@ -1380,6 +1444,17 @@ exports.createFund = async (req, res, next) => {
         .json({ success: false, message: "Float amount is required" });
     }
 
+    // Validate opening balance doesn't exceed float amount
+    if (openingBalance && openingBalance > floatAmount) {
+      return res.status(400).json({
+        success: false,
+        code: "OPENING_BALANCE_EXCEEDS_FLOAT",
+        message: `Opening balance (${openingBalance}) cannot exceed the float amount (${floatAmount}). Please adjust the opening balance or increase the float limit.`,
+        floatAmount,
+        openingBalance,
+      });
+    }
+
     const pettyCashFloat = new PettyCashFloat({
       company: companyId,
       name,
@@ -1542,6 +1617,21 @@ exports.topUp = async (req, res, next) => {
     const currentBalance = await getCurrentBalance(float._id);
     const newBalance = currentBalance + amount;
 
+    // Validate that top-up won't exceed float amount
+    if (float.floatAmount && newBalance > float.floatAmount) {
+      const excess = newBalance - float.floatAmount;
+      return res.status(409).json({
+        success: false,
+        code: "FLOAT_AMOUNT_EXCEEDED",
+        message: `This top-up would exceed the fund's float amount of ${float.floatAmount}. Current balance: ${currentBalance}, Top-up amount: ${amount}, Excess: ${excess}. Please reduce the top-up amount or increase the float limit.`,
+        floatAmount: float.floatAmount,
+        currentBalance,
+        requestedAmount: amount,
+        newBalance,
+        excess,
+      });
+    }
+
     // Create transaction record
     const transaction = await PettyCashTransaction.create({
       company: companyId,
@@ -1650,17 +1740,25 @@ exports.topUp = async (req, res, next) => {
 // @desc    Record expense (cash paid out for an expense)
 // @route   POST /api/petty-cash/funds/:id/expense
 // @access  Private
-// Journal Entry: DR expense_account_id, CR 1050 Petty Cash
+// Journal Entry: DR expense_account_id (or 1250 for staff advance), CR 1050 Petty Cash
 exports.recordExpense = async (req, res, next) => {
   try {
     const companyId = req.user.company._id;
     const { id } = req.params;
     const {
       amount,
-      expenseAccountId,
+      expenseAccountId: providedExpenseAccountId,
       description,
       receiptRef,
       transactionDate,
+      category,
+      subcategory,
+      recipientType,
+      isTaxable,
+      isStaffAdvance,
+      purpose,
+      receiptUploadUrl,
+      receiptUploadName,
     } = req.body;
 
     // Validate required fields
@@ -1670,21 +1768,26 @@ exports.recordExpense = async (req, res, next) => {
         .json({ success: false, message: "Valid amount is required" });
     }
 
-    // Validate expense_account_id (required for expense)
-    if (!expenseAccountId) {
-      return res.status(400).json({
-        success: false,
-        message: "expenseAccountId is required for expense",
-      });
+    // Validate category
+    const expenseCategory = category || "miscellaneous";
+    const expenseSubcategory = subcategory || "";
+
+    // Determine the effective GL account
+    let effectiveExpenseAccountId = providedExpenseAccountId;
+    if (!effectiveExpenseAccountId) {
+      effectiveExpenseAccountId = getDefaultExpenseAccount(
+        expenseCategory,
+        expenseSubcategory,
+      );
     }
 
     // Validate expense account exists and allows direct posting
-    const accountCheck = canPostToAccount(expenseAccountId);
+    const accountCheck = canPostToAccount(effectiveExpenseAccountId);
     if (!accountCheck.valid) {
       return res.status(400).json({
         success: false,
         code: accountCheck.reason,
-        message: `Cannot post to account ${expenseAccountId}: ${accountCheck.reason === "ACCOUNT_NO_POSTING" ? "This is a header/summary account and cannot be posted to directly" : "Account not found"}`,
+        message: `Cannot post to account ${effectiveExpenseAccountId}: ${accountCheck.reason === "ACCOUNT_NO_POSTING" ? "This is a header/summary account and cannot be posted to directly" : "Account not found"}`,
       });
     }
 
@@ -1721,16 +1824,36 @@ exports.recordExpense = async (req, res, next) => {
       });
     }
 
+    // Build warnings (e.g. maintenance approaching float limit)
+    const warnings = buildExpenseWarnings(float, expenseCategory, amount);
+
+    // Determine journal debit account
+    // Staff advances are short-term receivables, not expenses
+    let journalDebitAccountId = effectiveExpenseAccountId;
+    let isAdvance = false;
+    if (isStaffAdvance === true || category === "staff_advance") {
+      journalDebitAccountId = DEFAULT_ACCOUNTS.employeeAdvances || "1250";
+      isAdvance = true;
+    }
+
     // Create expense record with auto-generated voucher number
     const expense = await PettyCashExpense.create({
       company: companyId,
       float: float._id,
       description: description || "Petty cash expense",
       amount,
-      expenseAccountId,
-      category: "miscellaneous",
+      expenseAccountId: effectiveExpenseAccountId,
+      category: expenseCategory,
+      subcategory: expenseSubcategory,
+      recipientType: recipientType || null,
+      isTaxable: isTaxable || false,
+      isStaffAdvance: isAdvance,
+      staffAdvanceStatus: isAdvance ? "outstanding" : null,
+      purpose: purpose || null,
       date: txDate,
       receiptNumber: receiptRef,
+      receiptUploadUrl: receiptUploadUrl || undefined,
+      receiptUploadName: receiptUploadName || undefined,
       status: "approved", // Auto-approved for direct expense recording
       approvedBy: req.user._id,
       approvedAt: new Date(),
@@ -1746,11 +1869,11 @@ exports.recordExpense = async (req, res, next) => {
       type: "expense",
       reference: expenseWithVoucher._id,
       referenceType: "PettyCashExpense",
-      voucherNumber: expenseWithVoucher.voucherNumber, // Link to expense voucher
-      amount: -amount, // Negative for expense
+      voucherNumber: expenseWithVoucher.voucherNumber,
+      amount: -amount,
       balanceAfter: newBalance,
       description: description || "Petty cash expense",
-      expenseAccountId,
+      expenseAccountId: effectiveExpenseAccountId,
       receiptRef,
       transactionDate: txDate,
       createdBy: req.user._id,
@@ -1760,31 +1883,36 @@ exports.recordExpense = async (req, res, next) => {
     await invalidateCache(float._id);
 
     // Create journal entry
-    // Debit: expense_account_id, Credit: Petty Cash (from float's ledgerAccountId)
+    // Debit: effectiveExpenseAccountId (or Employee Advances for staff advance)
+    // Credit: Petty Cash (from float's ledgerAccountId)
     const pettyCashAccount =
       float.ledgerAccountId || DEFAULT_ACCOUNTS.pettyCash;
     try {
+      const journalLines = [
+        JournalService.createDebitLine(
+          journalDebitAccountId,
+          amount,
+          `Petty cash ${isAdvance ? "advance" : "expense"}: ${transaction.referenceNo}`,
+        ),
+        JournalService.createCreditLine(
+          pettyCashAccount,
+          amount,
+          `Petty cash ${isAdvance ? "advance" : "expense"}: ${transaction.referenceNo}`,
+        ),
+      ];
+
       const journalEntry = await JournalService.createEntry(
         companyId,
         req.user._id,
         {
           date: txDate,
-          description: `Petty Cash Expense - ${description || "Expense"} - ${transaction.referenceNo}`,
-          sourceType: "petty_cash_expense",
+          description: `Petty Cash ${isAdvance ? "Advance" : "Expense"} - ${description || (isAdvance ? "Advance" : "Expense")} - ${transaction.referenceNo}`,
+          sourceType: isAdvance
+            ? "petty_cash_advance"
+            : "petty_cash_expense",
           sourceId: transaction._id,
           sourceReference: transaction.referenceNo,
-          lines: [
-            JournalService.createDebitLine(
-              expenseAccountId,
-              amount,
-              `Petty cash expense: ${transaction.referenceNo}`,
-            ),
-            JournalService.createCreditLine(
-              pettyCashAccount,
-              amount,
-              `Petty cash expense: ${transaction.referenceNo}`,
-            ),
-          ],
+          lines: journalLines,
           isAutoGenerated: true,
         },
       );
@@ -1810,6 +1938,7 @@ exports.recordExpense = async (req, res, next) => {
 
     res.status(201).json({
       success: true,
+      warnings: warnings.length > 0 ? warnings : undefined,
       data: {
         _id: transaction._id,
         referenceNo: transaction.referenceNo,
@@ -1819,7 +1948,10 @@ exports.recordExpense = async (req, res, next) => {
         amount,
         balanceAfter: newBalance,
         description: transaction.description,
-        expenseAccountId,
+        expenseAccountId: effectiveExpenseAccountId,
+        category: expenseCategory,
+        subcategory: expenseSubcategory,
+        isStaffAdvance: isAdvance,
         receiptRef,
         transactionDate: transaction.transactionDate,
         createdAt: transaction.createdAt,
@@ -1867,18 +1999,18 @@ exports.getFundTransactions = async (req, res, next) => {
 
     const total = await PettyCashTransaction.countDocuments(query);
 
-    // For pages > 1, compute the running balance UP TO the current page start
-    // by summing all prior transactions (those not in the current page query set)
-    let runningBalance = float.openingBalance;
-    const pageNum = parseInt(page);
-    if (pageNum > 1) {
-      // Sum all transactions that come BEFORE this page in chronological order
-      const priorTransactions = await PettyCashTransaction.find(query)
-        .sort({ transactionDate: 1, createdAt: 1 })
-        .limit((pageNum - 1) * parseInt(limit));
-      for (const tx of priorTransactions) {
-        runningBalance += tx.amount;
-      }
+    // Get ALL transactions to calculate running balance properly (chronologically)
+    // This ensures correct balance calculation regardless of pagination
+    const allTransactions = await PettyCashTransaction.find(query)
+      .sort({ transactionDate: 1, createdAt: 1 })
+      .lean();
+
+    // Calculate running balance for ALL transactions (oldest to newest)
+    let cumulativeBalance = 0;
+    const balanceMap = new Map();
+    for (const tx of allTransactions) {
+      cumulativeBalance += tx.amount;
+      balanceMap.set(tx._id.toString(), cumulativeBalance);
     }
 
     // Get expense account details for populated expenseAccountIds
@@ -1903,7 +2035,6 @@ exports.getFundTransactions = async (req, res, next) => {
     }
 
     const transactionsWithRunningBalance = transactions.map((tx) => {
-      runningBalance += tx.amount;
       return {
         _id: tx._id,
         referenceNo: tx.referenceNo,
@@ -1921,7 +2052,7 @@ exports.getFundTransactions = async (req, res, next) => {
                     ? "Adjustment"
                     : "Closing",
         amount: Math.abs(tx.amount),
-        runningBalance,
+        runningBalance: balanceMap.get(tx._id.toString()),
         description: tx.description,
         expenseAccountId: tx.expenseAccountId,
         expenseAccountName: tx.expenseAccountId

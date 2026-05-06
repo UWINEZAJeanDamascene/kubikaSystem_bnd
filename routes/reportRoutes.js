@@ -19,6 +19,9 @@ const { getCashFlow } = require('../controllers/cashFlowController');
 // Financial Ratios controller
 const { getFinancialRatios } = require('../controllers/financialRatiosController');
 
+// Liability Reports controller
+const { getDebtMaturitySchedule, getInterestExpenseAnalysis } = require('../controllers/liabilityReportsController');
+
 // Budget vs Actual report
 const BudgetService = require('../services/budgetService');
 
@@ -52,6 +55,13 @@ router.get('/cash-flow', cacheMiddleware({ type: 'report', ttl: 900 }), getCashF
 
 // Financial Ratios route
 router.get('/financial-ratios', cacheMiddleware({ type: 'report', ttl: 300 }), getFinancialRatios);
+
+// Liability Reports routes
+// GET /api/reports/debt-maturity (requires: as_of_date)
+router.get('/debt-maturity', cacheMiddleware({ type: 'report', ttl: 300 }), getDebtMaturitySchedule);
+
+// GET /api/reports/interest-expense (requires: date_from, date_to)
+router.get('/interest-expense', cacheMiddleware({ type: 'report', ttl: 300 }), getInterestExpenseAnalysis);
 
 // Budget vs Actual route
 router.get('/budget-vs-actual', async (req, res) => {

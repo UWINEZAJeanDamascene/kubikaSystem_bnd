@@ -171,6 +171,37 @@ const budgetSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    // Scenario / What-If Analysis fields
+    scenario_type: {
+      type: String,
+      enum: ["base", "optimistic", "pessimistic", "custom"],
+      default: "base",
+      index: true,
+    },
+    scenario_name: {
+      type: String,
+      trim: true,
+      default: null,
+    },
+    scenario_group_id: {
+      type: String,
+      index: true,
+      default: null,
+    },
+    is_primary_scenario: {
+      type: Boolean,
+      default: true,
+    },
+    parent_budget_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Budget",
+      default: null,
+    },
+    scenario_description: {
+      type: String,
+      trim: true,
+      default: "",
+    },
   },
   {
     timestamps: true,
@@ -188,14 +219,16 @@ const budgetSchema = new mongoose.Schema(
   },
 );
 
-// One budget per fiscal year per company (can have multiple but track by name)
+// Allow multiple scenarios per fiscal year per company
 budgetSchema.index(
-  { company_id: 1, fiscal_year: 1, name: 1 },
+  { company_id: 1, fiscal_year: 1, name: 1, scenario_type: 1 },
   { unique: true },
 );
 budgetSchema.index({ company_id: 1, status: 1 });
 budgetSchema.index({ company_id: 1, type: 1 });
 budgetSchema.index({ company_id: 1, department: 1 });
 budgetSchema.index({ company_id: 1, periodStart: 1, periodEnd: 1 });
+budgetSchema.index({ company_id: 1, scenario_group_id: 1 });
+budgetSchema.index({ company_id: 1, parent_budget_id: 1 });
 
 module.exports = mongoose.model("Budget", budgetSchema);

@@ -1,5 +1,21 @@
 const express = require("express");
 const router = express.Router();
+const multer = require("multer");
+
+// Configure multer for CSV uploads (memory storage for processing)
+const csvUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = ['text/csv', 'application/vnd.ms-excel', 'application/csv', 'text/plain'];
+    const allowedExt = file.originalname.toLowerCase().endsWith('.csv');
+    if (allowedTypes.includes(file.mimetype) || allowedExt) {
+      return cb(null, true);
+    }
+    cb(new Error('Only CSV files are allowed'));
+  }
+});
+
 const {
   getBankAccounts,
   getBankAccount,
@@ -25,6 +41,22 @@ const {
   createOpeningBalance,
   fixOpeningBalances,
 } = require("../controllers/bankAccountController");
+
+// New professional bank reconciliation controller
+const {
+  startReconciliation,
+  getReconciliationData,
+  suggestMatches,
+  matchItems,
+  unmatchItems,
+  ignoreStatementLine,
+  createAdjustingEntry,
+  completeReconciliation,
+  cancelReconciliation,
+  importStatement,
+  listReconciliations,
+  getReconciliationReport: getReconciliationReportNew,
+} = require("../controllers/bankReconciliationController");
 
 const { protect } = require("../middleware/auth");
 
@@ -90,7 +122,47 @@ router
 // Opening balance (posts opening journal entry)
 router.route("/:id/opening-balance").post(createOpeningBalance);
 
-// Reconciliation Report
+// Reconciliation Report (legacy)
 router.route("/:id/reconciliation-report").get(getReconciliationReport);
+
+// =====================================================
+// NEW PROFESSIONAL BANK RECONCILIATION ROUTES
+// =====================================================
+
+// Start a new reconciliation session
+router.route("/:id/reconciliation/start").post(startReconciliation);
+
+// Get reconciliation data (both sides - journal lines vs statement lines)
+router.route("/:id/reconciliation/data").get(getReconciliationData);
+
+// Auto-match suggestions
+router.route("/:id/reconciliation/suggest").get(suggestMatches);
+
+// User-approved matching (creates link only, no auto-modification)
+router.route("/:id/reconciliation/match-items").post(matchItems);
+
+// Unmatch items
+router.route("/:id/reconciliation/unmatch").post(unmatchItems);
+
+// Ignore a statement line
+router.route("/:id/reconciliation/ignore").post(ignoreStatementLine);
+
+// Create adjusting entry (user-explicit only)
+router.route("/:id/reconciliation/adjusting-entry").post(createAdjustingEntry);
+
+// Complete reconciliation (only if difference = 0)
+router.route("/:id/reconciliation/complete").post(completeReconciliation);
+
+// Cancel in-progress reconciliation
+router.route("/:id/reconciliation/cancel").post(cancelReconciliation);
+
+// Import statement CSV with proper date parsing
+router.route("/:id/reconciliation/import").post(csvUpload.single('file'), importStatement);
+
+// List all reconciliations (history)
+router.route("/:id/reconciliations").get(listReconciliations);
+
+// Get detailed reconciliation report (new)
+router.route("/:id/reconciliation/report").get(getReconciliationReportNew);
 
 module.exports = router;

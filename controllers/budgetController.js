@@ -1577,3 +1577,256 @@ exports.testWorkflowMatch = async (req, res) => {
     res.status(400).json({ error: error.message });
   }
 };
+
+// ── IMPORT: PARSE FILE ─────────────────────────────────────────────────
+exports.parseImport = async (req, res) => {
+  try {
+    const BudgetImportService = require("../services/budgetImportService");
+
+    if (!req.file) {
+      return res.status(400).json({ error: "No file uploaded" });
+    }
+
+    const fileType = req.file.mimetype || req.file.originalname?.split('.').pop();
+    const parsedData = await BudgetImportService.parseFile(req.file.buffer, fileType);
+
+    res.json({
+      success: true,
+      data: parsedData,
+      message: "File parsed successfully",
+    });
+  } catch (error) {
+    if (error.message === 'EXCEL_NO_BUDGET_SHEET') {
+      return res.status(400).json({ error: "Excel file must have a 'Budget' sheet" });
+    }
+    res.status(400).json({ error: error.message });
+  }
+};
+
+// ── IMPORT: VALIDATE ───────────────────────────────────────────────────
+exports.validateImport = async (req, res) => {
+  try {
+    const companyId = req.user.company._id;
+    const BudgetImportService = require("../services/budgetImportService");
+
+    const { parsedData } = req.body;
+
+    if (!parsedData) {
+      return res.status(400).json({ error: "parsedData is required" });
+    }
+
+    const validation = await BudgetImportService.validateImport(companyId, parsedData);
+
+    res.json({
+      success: true,
+      data: validation,
+      message: validation.isValid ? "Validation passed" : "Validation found issues",
+    });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+};
+
+// ── IMPORT: EXECUTE ────────────────────────────────────────────────────
+exports.executeImport = async (req, res) => {
+  try {
+    const companyId = req.user.company._id;
+    const userId = req.user.id;
+    const BudgetImportService = require("../services/budgetImportService");
+
+    const { validatedData, options } = req.body;
+
+    if (!validatedData) {
+      return res.status(400).json({ error: "validatedData is required" });
+    }
+
+    const results = await BudgetImportService.executeImport(
+      companyId,
+      userId,
+      validatedData,
+      options || {}
+    );
+
+    res.json({
+      success: results.errors.length === 0 || (options?.skipErrors && results.budgetsCreated + results.budgetsUpdated > 0),
+      data: results,
+      message: results.errors.length === 0
+        ? `Import completed: ${results.budgetsCreated} budgets created, ${results.budgetsUpdated} updated, ${results.linesCreated} lines created, ${results.linesUpdated} updated`
+        : `Import completed with ${results.errors.length} errors`,
+    });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+};
+
+// ── IMPORT: DOWNLOAD TEMPLATE ────────────────────────────────────────
+exports.downloadImportTemplate = async (req, res) => {
+  try {
+    const BudgetImportService = require("../services/budgetImportService");
+
+    const { format = 'excel' } = req.query;
+
+    if (!['excel', 'csv'].includes(format)) {
+      return res.status(400).json({ error: "Format must be 'excel' or 'csv'" });
+    }
+
+    const templateBuffer = await BudgetImportService.generateTemplate(format);
+
+    const contentType = format === 'excel'
+      ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      : 'text/csv';
+
+    const filename = format === 'excel'
+      ? 'budget_import_template.xlsx'
+      : 'budget_import_template.csv';
+
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(templateBuffer);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+};
+
+// ── SCENARIOS / WHAT-IF ANALYSIS ───────────────────────────────────────
+
+// Create a new scenario
+exports.createScenario = async (req, res) => {
+  try {
+    const companyId = req.user.company._id;
+    const userId = req.user.id;
+    const { id } = req.params;
+    const { scenario_type, scenario_name, adjustments, notes } = req.body;
+
+    if (!scenario_type) {
+      return res.status(400).json({ error: "scenario_type is required" });
+    }
+
+    const validTypes = ['base', 'optimistic', 'pessimistic', 'custom'];
+    if (!validTypes.includes(scenario_type)) {
+      return res.status(400).json({ error: "Invalid scenario_type. Must be: base, optimistic, pessimistic, custom" });
+    }
+
+    const scenario = await BudgetService.createScenario(companyId, id, userId, {
+      scenario_type,
+      scenario_name,
+      adjustments,
+      notes
+    });
+
+    res.json({
+      success: true,
+      data: scenario,
+      message: "Scenario created successfully",
+    });
+  } catch (error) {
+    if (error.message === 'NOT_FOUND') {
+      return res.status(404).json({ error: "Budget not found" });
+    }
+    if (error.message === 'SCENARIO_EXISTS') {
+      return res.status(400).json({ error: "A scenario of this type already exists for this budget" });
+    }
+    res.status(400).json({ error: error.message });
+  }
+};
+
+// Get all scenarios for a budget
+exports.getScenarios = async (req, res) => {
+  try {
+    const companyId = req.user.company._id;
+    const { id } = req.params;
+
+    const scenarios = await BudgetService.getScenarios(companyId, id);
+
+    res.json({
+      success: true,
+      data: scenarios,
+      count: scenarios.length,
+    });
+  } catch (error) {
+    if (error.message === 'NOT_FOUND') {
+      return res.status(404).json({ error: "Budget not found" });
+    }
+    res.status(400).json({ error: error.message });
+  }
+};
+
+// Compare scenarios
+exports.compareScenarios = async (req, res) => {
+  try {
+    const companyId = req.user.company._id;
+    const { scenarioIds } = req.body;
+
+    if (!scenarioIds || !Array.isArray(scenarioIds) || scenarioIds.length < 2) {
+      return res.status(400).json({ error: "At least 2 scenarioIds are required for comparison" });
+    }
+
+    const comparison = await BudgetService.compareScenarios(companyId, scenarioIds);
+
+    res.json({
+      success: true,
+      data: comparison,
+    });
+  } catch (error) {
+    if (error.message === 'NOT_FOUND') {
+      return res.status(404).json({ error: "One or more scenarios not found" });
+    }
+    if (error.message === 'MINIMUM_2_SCENARIOS_REQUIRED') {
+      return res.status(400).json({ error: "At least 2 scenarios are required for comparison" });
+    }
+    res.status(400).json({ error: error.message });
+  }
+};
+
+// Set a scenario as primary
+exports.setPrimaryScenario = async (req, res) => {
+  try {
+    const companyId = req.user.company._id;
+    const userId = req.user.id;
+    const { scenarioId } = req.params;
+
+    const scenario = await BudgetService.setPrimaryScenario(companyId, scenarioId, userId);
+
+    res.json({
+      success: true,
+      data: scenario,
+      message: "Scenario set as primary successfully",
+    });
+  } catch (error) {
+    if (error.message === 'NOT_FOUND') {
+      return res.status(404).json({ error: "Scenario not found" });
+    }
+    if (error.message === 'NOT_A_SCENARIO') {
+      return res.status(400).json({ error: "This budget is not part of a scenario group" });
+    }
+    res.status(400).json({ error: error.message });
+  }
+};
+
+// Delete a scenario
+exports.deleteScenario = async (req, res) => {
+  try {
+    const companyId = req.user.company._id;
+    const userId = req.user.id;
+    const { scenarioId } = req.params;
+
+    const result = await BudgetService.deleteScenario(companyId, scenarioId, userId);
+
+    res.json({
+      success: true,
+      data: result,
+      message: "Scenario deleted successfully",
+    });
+  } catch (error) {
+    if (error.message === 'NOT_FOUND') {
+      return res.status(404).json({ error: "Scenario not found" });
+    }
+    if (error.message === 'NOT_A_SCENARIO') {
+      return res.status(400).json({ error: "This budget is not part of a scenario group" });
+    }
+    if (error.message === 'CANNOT_DELETE_PRIMARY_SCENARIO') {
+      return res.status(400).json({ error: "Cannot delete the primary scenario. Set another scenario as primary first." });
+    }
+    res.status(400).json({ error: error.message });
+  }
+};

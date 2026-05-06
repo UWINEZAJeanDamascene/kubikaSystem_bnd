@@ -5,6 +5,7 @@ const ChartOfAccounts = require('../../models/ChartOfAccount')
 const BankAccount = require('../../models/BankAccount')
 const Invoice = require('../../models/Invoice')
 const Company = require('../../models/Company')
+const Loan = require('../../models/Loan')
 const { PettyCashFloat } = require('../../models/PettyCash')
 const dateHelpers = require('../../utils/dateHelpers')
 const dashboardCache = require('../DashboardCacheService')
@@ -50,7 +51,8 @@ class ExecutiveDashboardService {
       cashBalance,
       outstandingAR,
       overdueAR,
-      recentTransactions
+      recentTransactions,
+      upcomingDebtPayments
     ] = await Promise.all([
       ExecutiveDashboardService._getAccountTypeTotal(companyId, 'revenue', thisMonth.start, thisMonth.end),
       ExecutiveDashboardService._getAccountTypeTotal(companyId, 'revenue', currentFY.start, currentFY.end),
@@ -61,7 +63,8 @@ class ExecutiveDashboardService {
       ExecutiveDashboardService._getTotalCashBalance(companyId),
       ExecutiveDashboardService._getOutstandingAR(companyId),
       ExecutiveDashboardService._getOverdueAR(companyId),
-      ExecutiveDashboardService._getRecentJournalEntries(companyId, 5)
+      ExecutiveDashboardService._getRecentJournalEntries(companyId, 5),
+      ExecutiveDashboardService._getUpcomingDebtPayments(companyId)
     ])
 
     const netProfitThisMonth = dateHelpers.round2(revenueThisMonth - expensesThisMonth)
@@ -117,6 +120,9 @@ class ExecutiveDashboardService {
 
       // -- RECENT ACTIVITY --
       recent_journal_entries: recentTransactions,
+
+      // -- UPCOMING DEBT PAYMENTS --
+      upcoming_debt_payments: upcomingDebtPayments,
 
       // -- DATE CONTEXT --
       date_context: {
@@ -342,6 +348,82 @@ class ExecutiveDashboardService {
       .limit(limit)
       .select('entryNumber description date sourceType totalDebit totalCredit')
       .lean()
+  }
+
+  // Get upcoming debt payments (next 30 days)
+  static async _getUpcomingDebtPayments(companyId) {
+    const today = new Date()
+    const thirtyDaysFromNow = new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000)
+
+    const activeLoans = await Loan.find({
+      company: companyId,
+      status: { $in: ['active', 'partially_repaid'] },
+      repaymentType: { $in: ['amortized', 'interest_only'] }
+    }).select('name loanNumber outstandingBalance interestRate startDate endDate repaymentType paymentFrequency installmentAmount').lean()
+
+    const upcomingPayments = []
+
+    for (const loan of activeLoans) {
+      // Calculate next payment date based on loan terms
+      const startDate = new Date(loan.startDate)
+      const endDate = new Date(loan.endDate)
+      const paymentFrequency = loan.paymentFrequency || 'monthly'
+
+      // Find the next payment date
+      let nextPaymentDate = new Date(startDate)
+      while (nextPaymentDate <= today) {
+        if (paymentFrequency === 'monthly') {
+          nextPaymentDate.setMonth(nextPaymentDate.getMonth() + 1)
+        } else if (paymentFrequency === 'quarterly') {
+          nextPaymentDate.setMonth(nextPaymentDate.getMonth() + 3)
+        } else if (paymentFrequency === 'semi_annual') {
+          nextPaymentDate.setMonth(nextPaymentDate.getMonth() + 6)
+        } else if (paymentFrequency === 'annual') {
+          nextPaymentDate.setFullYear(nextPaymentDate.getFullYear() + 1)
+        } else {
+          nextPaymentDate.setMonth(nextPaymentDate.getMonth() + 1) // default to monthly
+        }
+      }
+
+      // Check if next payment is within 30 days
+      if (nextPaymentDate <= thirtyDaysFromNow && nextPaymentDate <= endDate) {
+        const daysUntil = Math.ceil((nextPaymentDate - today) / (1000 * 60 * 60 * 24))
+
+        // Calculate estimated payment amount
+        let estimatedPayment = 0
+        if (loan.repaymentType === 'interest_only') {
+          // Monthly interest payment
+          estimatedPayment = (loan.outstandingBalance || 0) * (loan.interestRate || 0) / 100 / 12
+        } else if (loan.installmentAmount) {
+          estimatedPayment = loan.installmentAmount
+        } else {
+          // Estimate based on outstanding balance and remaining term
+          const monthsRemaining = Math.max(1, Math.ceil((endDate - today) / (1000 * 60 * 60 * 24 * 30)))
+          const monthlyInterest = (loan.outstandingBalance || 0) * (loan.interestRate || 0) / 100 / 12
+          const monthlyPrincipal = (loan.outstandingBalance || 0) / monthsRemaining
+          estimatedPayment = monthlyPrincipal + monthlyInterest
+        }
+
+        upcomingPayments.push({
+          loanId: loan._id,
+          loanName: loan.name,
+          loanNumber: loan.loanNumber,
+          dueDate: nextPaymentDate.toISOString().split('T')[0],
+          daysUntil,
+          estimatedAmount: dateHelpers.round2(estimatedPayment),
+          outstandingBalance: loan.outstandingBalance || 0
+        })
+      }
+    }
+
+    // Sort by due date
+    upcomingPayments.sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate))
+
+    return {
+      totalUpcoming: upcomingPayments.length,
+      totalAmount: dateHelpers.round2(upcomingPayments.reduce((sum, p) => sum + p.estimatedAmount, 0)),
+      payments: upcomingPayments.slice(0, 5) // Top 5 upcoming payments
+    }
   }
 }
 

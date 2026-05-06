@@ -18,6 +18,59 @@ const { DEFAULT_ACCOUNTS, CHART_OF_ACCOUNTS } = require("../constants/chartOfAcc
 const OPENING_BALANCE_EQUITY_CODE = DEFAULT_ACCOUNTS.openingBalanceEquity || "3500";
 
 /**
+ * Robust date parsing helper supporting multiple formats
+ * DD/MM/YYYY, MM/DD/YYYY, YYYY-MM-DD, DD-MM-YYYY, etc.
+ */
+function parseCSVDate(dateStr) {
+  if (!dateStr || typeof dateStr !== "string") return null;
+
+  const str = dateStr.trim();
+
+  // Already ISO format (YYYY-MM-DD)
+  const isoMatch = str.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (isoMatch) {
+    const d = new Date(parseInt(isoMatch[1]), parseInt(isoMatch[2]) - 1, parseInt(isoMatch[3]));
+    return isNaN(d.getTime()) ? null : d;
+  }
+
+  // DD/MM/YYYY or DD-MM-YYYY
+  const ddMmYyyyMatch = str.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})$/);
+  if (ddMmYyyyMatch) {
+    const day = parseInt(ddMmYyyyMatch[1]);
+    const month = parseInt(ddMmYyyyMatch[2]) - 1;
+    const year = parseInt(ddMmYyyyMatch[3]);
+    const d = new Date(year, month, day);
+    return isNaN(d.getTime()) ? null : d;
+  }
+
+  // MM/DD/YYYY or MM-DD-YYYY
+  const mmDdYyyyMatch = str.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})$/);
+  if (mmDdYyyyMatch) {
+    // Try as MM/DD/YYYY
+    const month = parseInt(mmDdYyyyMatch[1]) - 1;
+    const day = parseInt(mmDdYyyyMatch[2]);
+    const year = parseInt(mmDdYyyyMatch[3]);
+    const d = new Date(year, month, day);
+    return isNaN(d.getTime()) ? null : d;
+  }
+
+  // DD/MM/YY or DD-MM-YY (2-digit year)
+  const ddMmYyMatch = str.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2})$/);
+  if (ddMmYyMatch) {
+    const day = parseInt(ddMmYyMatch[1]);
+    const month = parseInt(ddMmYyMatch[2]) - 1;
+    let year = parseInt(ddMmYyMatch[3]);
+    year = year < 50 ? 2000 + year : 1900 + year;
+    const d = new Date(year, month, day);
+    return isNaN(d.getTime()) ? null : d;
+  }
+
+  // Fallback to native Date parsing
+  const fallback = new Date(str);
+  return isNaN(fallback.getTime()) ? null : fallback;
+}
+
+/**
  * Ensure Opening Balance Equity account (3500) exists in ChartOfAccount
  * This is needed for companies created before account 3500 was added
  */
@@ -1535,8 +1588,8 @@ exports.importCSV = async (req, res, next) => {
     if (latestExistingStatement && !skipReordering) {
       // Find earliest date in new import
       const earliestImportDate = csvTransactions
-        .map((tx) => (tx.date ? new Date(tx.date) : null))
-        .filter((d) => d && !isNaN(d.getTime()))
+        .map((tx) => (tx.date ? parseCSVDate(tx.date) : null))
+        .filter((d) => d)
         .sort((a, b) => a - b)[0];
 
       if (
@@ -1552,8 +1605,8 @@ exports.importCSV = async (req, res, next) => {
     if (dateFrom || dateTo) {
       filteredTransactions = csvTransactions.filter((tx) => {
         if (!tx.date) return true;
-        const txDate = new Date(tx.date);
-        if (isNaN(txDate.getTime())) return true;
+        const txDate = parseCSVDate(tx.date);
+        if (!txDate) return true;
 
         let include = true;
         if (dateFrom) {
@@ -1573,8 +1626,8 @@ exports.importCSV = async (req, res, next) => {
     filteredTransactions = filteredTransactions
       .map((tx, index) => ({ ...tx, _importOrder: index }))
       .sort((a, b) => {
-        const dateA = a.date ? new Date(a.date) : new Date(0);
-        const dateB = b.date ? new Date(b.date) : new Date(0);
+        const dateA = a.date ? parseCSVDate(a.date) : new Date(0);
+        const dateB = b.date ? parseCSVDate(b.date) : new Date(0);
         if (dateA.getTime() === dateB.getTime()) {
           return a._importOrder - b._importOrder;
         }
@@ -1631,11 +1684,11 @@ exports.importCSV = async (req, res, next) => {
       // Compute running balance: running_balance = running_balance + credit - debit
       runningBalance = runningBalance + creditAmount - debitAmount;
 
-      // Parse date
+      // Parse date using robust parser
       let transactionDate = new Date();
       if (tx.date) {
-        const parsed = new Date(tx.date);
-        if (!isNaN(parsed.getTime())) {
+        const parsed = parseCSVDate(tx.date);
+        if (parsed) {
           transactionDate = parsed;
         }
       }
@@ -1672,66 +1725,21 @@ exports.importCSV = async (req, res, next) => {
       importedStatementLines.push(statementLine);
     }
 
-    // Also create BankTransaction entries for backwards compatibility
-    const importedTransactions = [];
-    for (const line of importedStatementLines) {
-      const debitAmount = parseFloat(line.debitAmount?.toString() || "0");
-      const creditAmount = parseFloat(line.creditAmount?.toString() || "0");
-      const amount = Math.max(debitAmount, creditAmount);
-
-      const transaction = new BankTransaction({
-        company: companyId,
-        account: account._id,
-        type: debitAmount > 0 ? "withdrawal" : "deposit",
-        amount,
-        balanceAfter: parseFloat(line.balance?.toString() || "0"),
-        description: line.description,
-        date: line.transactionDate,
-        referenceNumber: line.reference,
-        paymentMethod: "bank_transfer",
-        status: "completed",
-        createdBy: req.user._id,
-        notes: `Imported from CSV: ${line.transactionDate.toISOString().split("T")[0]} | ${line.reference || ""}`,
-      });
-
-      await transaction.save();
-      importedTransactions.push(transaction);
-    }
-
-    // Update account cache - invalidate since journal entries may have changed
+    // Update account cache - invalidate since new statement lines imported
     account.cacheValid = false;
     await account.save();
-
-    let matchResults = null;
-    let matched = 0;
-    let unmatched = importedTransactions.length;
-
-    // Auto-match if enabled
-    if (autoMatch && importedTransactions.length > 0) {
-      matchResults = await autoMatchTransactions(
-        companyId,
-        account._id,
-        importedTransactions,
-      );
-      matched = matchResults.matched;
-      unmatched = matchResults.unmatched;
-    }
 
     res.status(201).json({
       success: true,
       data: {
         imported: importedStatementLines.length,
-        matched,
-        unmatched,
         computedEndingBalance: runningBalance,
         statementLines: importedStatementLines,
-        transactions: importedTransactions,
-        matchResults,
         sequentialWarning,
       },
       message: sequentialWarning
-        ? `Imported ${importedStatementLines.length} transactions. ${sequentialWarning}`
-        : `Successfully imported ${importedStatementLines.length} transactions`,
+        ? `Imported ${importedStatementLines.length} statement lines. ${sequentialWarning}`
+        : `Successfully imported ${importedStatementLines.length} statement lines`,
     });
   } catch (error) {
     next(error);

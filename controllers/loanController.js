@@ -544,8 +544,23 @@ exports.updateLoan = async (req, res, next) => {
 
     // Prevent updating certain fields if loan has transactions
     if (loan.transactions && loan.transactions.length > 0) {
-      // Allow only status updates and notes
-      const allowedFields = ["status", "notes"];
+      // Allow status, notes, and IFRS 7 disclosure fields (these don't affect financial calculations)
+      const allowedFields = [
+        "status",
+        "notes",
+        // IFRS 7.33 Classification
+        "isSecured",
+        "securityDescription",
+        "classification",
+        // IFRS 7.34 Currency
+        "currencyCode",
+        "exchangeRate",
+        // IAS 1.74 Covenant tracking
+        "hasCovenants",
+        "covenantDetails",
+        "covenantBreach",
+        "covenantBreachDate"
+      ];
       const updatedFields = Object.keys(req.body);
       const hasDisallowedFields = updatedFields.some(
         (field) => !allowedFields.includes(field),
@@ -555,7 +570,7 @@ exports.updateLoan = async (req, res, next) => {
         return res.status(400).json({
           success: false,
           message:
-            "Cannot update loan details once transactions exist. Only status and notes can be updated.",
+            "Cannot update loan details once transactions exist. Only status, notes, and IFRS 7 disclosure fields can be updated.",
         });
       }
     }

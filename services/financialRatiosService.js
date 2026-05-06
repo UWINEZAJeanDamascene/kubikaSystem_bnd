@@ -5,6 +5,7 @@ const PLStatementService = require('./plStatementService');
 const Company = require('../models/Company');
 const ChartOfAccount = require('../models/ChartOfAccount');
 const JournalEntry = require('../models/JournalEntry');
+const Loan = require('../models/Loan');
 
 /**
  * Financial Ratios Service — IAS/IFRS Compliant
@@ -166,6 +167,35 @@ class FinancialRatiosService {
 
     // 16. Interest Coverage Ratio
     const interestCoverage = financeCosts > 0 ? operatingProfit / financeCosts : null;
+
+    // ── DEBT METRICS (from loan data) ─────────────────────────────
+    const activeLoans = await Loan.find({
+      company: new mongoose.Types.ObjectId(companyId),
+      status: { $in: ['active', 'partially_repaid'] }
+    });
+
+    const totalBorrowings = activeLoans.reduce((sum, loan) => sum + (loan.outstandingBalance || 0), 0);
+    const weightedInterestRate = totalBorrowings > 0
+      ? activeLoans.reduce((sum, loan) => sum + ((loan.outstandingBalance || 0) * (loan.interestRate || 0)), 0) / totalBorrowings
+      : 0;
+    const securedLoans = activeLoans.filter(loan => loan.isSecured).reduce((sum, loan) => sum + (loan.outstandingBalance || 0), 0);
+    const shortTermLoans = activeLoans.filter(loan => {
+      const endDate = new Date(loan.endDate);
+      const monthsRemaining = (endDate - new Date(asOfDate)) / (1000 * 60 * 60 * 24 * 30);
+      return monthsRemaining <= 12;
+    }).reduce((sum, loan) => sum + (loan.outstandingBalance || 0), 0);
+
+    // Debt to Assets
+    const debtToAssets = totalAssets > 0 ? totalLiabilities / totalAssets : null;
+
+    // Net Debt (Borrowings - Cash)
+    const netDebt = totalBorrowings - (cashBalance || 0);
+
+    // Debt Service Coverage Ratio (using EBIT approx = Operating Profit + Finance Costs)
+    const ebit = operatingProfit + (financeCosts || 0);
+    // Estimate annual debt service (interest + principal) - simplified
+    const estimatedAnnualDebtService = (financeCosts || 0) + (totalBorrowings * 0.1); // Assume 10% avg principal repayment
+    const debtServiceCoverage = estimatedAnnualDebtService > 0 ? ebit / estimatedAnnualDebtService : null;
 
     // ── Build response ────────────────────────────────────────────
     const round = (v) => v !== null ? Math.round(v * 100) / 100 : null;
@@ -335,12 +365,66 @@ class FinancialRatiosService {
               benchmark: 'Strong: ≥ 3.0, Adequate: ≥ 1.5',
               inputs: { ebit: round(operatingProfit), finance_costs: round(financeCosts) },
               status: FinancialRatiosService._rate(interestCoverage, [3, 1.5], 'gte')
+            },
+            debt_to_assets: {
+              value: round(debtToAssets),
+              label: 'Debt to Assets Ratio',
+              formula: 'Total Liabilities ÷ Total Assets',
+              benchmark: 'Low risk: ≤ 0.4, Moderate: ≤ 0.6',
+              inputs: { total_liabilities: round(totalLiabilities), total_assets: round(totalAssets) },
+              status: FinancialRatiosService._rate(debtToAssets, [0.4, 0.6], 'lte')
             }
           }
         }
       },
 
-      summary: FinancialRatiosService._computeSummary(currentRatio, quickRatio, grossMarginPct, netProfitMarginPct, returnOnAssets, debtToEquity, inventoryTurnover),
+      debt_metrics: {
+        label: 'Debt Metrics',
+        metrics: {
+          total_borrowings: {
+            value: round(totalBorrowings),
+            label: 'Total Borrowings',
+            description: 'Sum of all outstanding loan balances'
+          },
+          net_debt: {
+            value: round(netDebt),
+            label: 'Net Debt',
+            description: 'Borrowings minus Cash & Equivalents'
+          },
+          weighted_avg_interest_rate: {
+            value: round(weightedInterestRate),
+            label: 'Weighted Avg Interest Rate',
+            unit: '%',
+            description: 'Interest rate weighted by loan balance'
+          },
+          secured_loan_ratio: {
+            value: totalBorrowings > 0 ? round(securedLoans / totalBorrowings) : null,
+            label: 'Secured Loan Ratio',
+            unit: '%',
+            description: 'Secured loans ÷ Total borrowings'
+          },
+          short_term_debt_ratio: {
+            value: totalBorrowings > 0 ? round(shortTermLoans / totalBorrowings) : null,
+            label: 'Short-term Debt Ratio',
+            unit: '%',
+            description: 'Due within 12 months ÷ Total borrowings'
+          },
+          debt_service_coverage: {
+            value: round(debtServiceCoverage),
+            label: 'Debt Service Coverage Ratio',
+            description: 'EBIT ÷ (Interest + Principal)',
+            benchmark: 'Strong: ≥ 1.5, Adequate: ≥ 1.2',
+            status: FinancialRatiosService._rate(debtServiceCoverage, [1.5, 1.2], 'gte')
+          },
+          loan_count: {
+            value: activeLoans.length,
+            label: 'Active Loans',
+            description: 'Number of active/partially repaid loans'
+          }
+        }
+      },
+
+      summary: FinancialRatiosService._computeSummary(currentRatio, quickRatio, grossMarginPct, netProfitMarginPct, returnOnAssets, debtToEquity, inventoryTurnover, debtToAssets),
 
       generated_at: new Date()
     };
@@ -369,11 +453,11 @@ class FinancialRatiosService {
   /**
    * Compute overall health summary
    */
-  static _computeSummary(currentRatio, quickRatio, grossMargin, netMargin, roa, debtToEquity, inventoryTurnover) {
+  static _computeSummary(currentRatio, quickRatio, grossMargin, netMargin, roa, debtToEquity, inventoryTurnover, debtToAssets) {
     const liquidityStatus = FinancialRatiosService._rate(currentRatio, [2, 1], 'gte');
     const profitabilityStatus = FinancialRatiosService._rate(netMargin, [15, 5], 'gte');
     const efficiencyStatus = FinancialRatiosService._rate(inventoryTurnover, [6, 3], 'gte');
-    const leverageStatus = FinancialRatiosService._rate(debtToEquity, [1, 2], 'lte');
+    const leverageStatus = FinancialRatiosService._rate(debtToAssets, [0.4, 0.6], 'lte');
 
     const statuses = [liquidityStatus, profitabilityStatus, efficiencyStatus, leverageStatus];
     const goodCount = statuses.filter(s => s === 'good').length;
