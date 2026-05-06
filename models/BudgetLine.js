@@ -50,6 +50,19 @@ const budgetLineSchema = new mongoose.Schema(
       trim: true,
       default: "",
     },
+    // Project/Job-Level Budgeting fields
+    project_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Project",
+      default: null,
+      index: true,
+    },
+    wbs_code: {
+      type: String,
+      trim: true,
+      default: null,
+      index: true,
+    },
   },
   {
     timestamps: true,
@@ -87,10 +100,19 @@ budgetLineSchema.index(
     company_id: 1,
     budget_id: 1,
     account_id: 1,
+    project_id: 1,
     period_month: 1,
     period_year: 1,
   },
-  { unique: true },
+  { unique: true, partialFilterExpression: { project_id: { $exists: true } } },
 );
+
+// Index for querying budget lines by project
+budgetLineSchema.index({
+  company_id: 1,
+  project_id: 1,
+  period_year: 1,
+  period_month: 1,
+});
 
 module.exports = mongoose.model("BudgetLine", budgetLineSchema);

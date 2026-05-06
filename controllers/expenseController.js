@@ -5,6 +5,7 @@ const ChartOfAccount = require("../models/ChartOfAccount");
 const JournalService = require("../services/journalService");
 const JournalEntry = require("../models/JournalEntry");
 const AuditService = require("../services/auditService");
+const BudgetService = require("../services/budgetService");
 
 // @desc    Get all expenses for a company
 // @route   GET /api/expenses
@@ -404,27 +405,20 @@ exports.createExpense = async (req, res, next) => {
       // Liquidate encumbrance immediately if expense is paid
       if (expense.budget_id) {
         try {
-          const Encumbrance = require('../models/Encumbrance');
-          const encumbrance = await Encumbrance.findOne({
-            source_type: 'expense_request',
-            source_id: expense._id.toString()
-          });
-
-          if (encumbrance) {
-            const totalAmount = expense.total_amount || (expense.amount + (expense.tax_amount || 0));
-            encumbrance.liquidated_amount = totalAmount;
-            encumbrance.remaining_amount = 0;
-            encumbrance.status = 'fully_liquidated';
-            encumbrance.liquidated_at = new Date();
-            encumbrance.liquidations.push({
-              document_type: 'payment',
-              document_id: expense._id.toString(),
-              document_number: expense.reference_no || `EXP-${expense._id.toString().slice(-5)}`,
-              amount: totalAmount,
-              date: new Date(),
-              notes: 'Expense created and paid immediately'
-            });
-            await encumbrance.save();
+          if (expense.encumbrance_id) {
+            await BudgetService.liquidateEncumbranceFromExpense(
+              expense,
+              req.user._id,
+              {
+                document_type: "expense_payment",
+                document_id: expense._id.toString(),
+                document_number:
+                  expense.reference_no ||
+                  `EXP-${expense._id.toString().slice(-5)}`,
+                date: new Date(),
+                notes: "Expense created and paid immediately",
+              },
+            );
           }
         } catch (encErr) {
           console.error('Error liquidating encumbrance on create:', encErr);
@@ -564,27 +558,20 @@ exports.updateExpense = async (req, res, next) => {
     // Liquidate encumbrance if expense is being paid and has budget
     if (isBeingPaid && expense.budget_id) {
       try {
-        const Encumbrance = require('../models/Encumbrance');
-        const encumbrance = await Encumbrance.findOne({
-          source_type: 'expense_request',
-          source_id: expense._id.toString()
-        });
-
-        if (encumbrance) {
-          const totalAmount = expense.total_amount || (expense.amount + (expense.tax_amount || 0));
-          encumbrance.liquidated_amount = totalAmount;
-          encumbrance.remaining_amount = 0;
-          encumbrance.status = 'fully_liquidated';
-          encumbrance.liquidated_at = new Date();
-          encumbrance.liquidations.push({
-            document_type: 'payment',
-            document_id: expense._id.toString(),
-            document_number: expense.reference_no || `EXP-${expense._id.toString().slice(-5)}`,
-            amount: totalAmount,
-            date: new Date(),
-            notes: 'Expense marked as paid'
-          });
-          await encumbrance.save();
+        if (expense.encumbrance_id) {
+          await BudgetService.liquidateEncumbranceFromExpense(
+            expense,
+            req.user._id,
+            {
+              document_type: "expense_payment",
+              document_id: expense._id.toString(),
+              document_number:
+                expense.reference_no ||
+                `EXP-${expense._id.toString().slice(-5)}`,
+              date: new Date(),
+              notes: "Expense marked as paid",
+            },
+          );
         }
       } catch (encErr) {
         console.error('Error liquidating encumbrance on update:', encErr);

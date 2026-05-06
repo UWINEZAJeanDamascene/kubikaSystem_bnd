@@ -195,6 +195,11 @@ router.get(
   budgetController.getEncumbrances,
 );
 router.get(
+  "/:id/actual-consumptions",
+  authorize("budgets", "read"),
+  budgetController.getActualConsumptions,
+);
+router.get(
   "/:id/encumbrances/summary",
   authorize("budgets", "read"),
   budgetController.getEncumbranceSummary,

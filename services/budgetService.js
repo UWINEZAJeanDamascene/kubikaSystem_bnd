@@ -10,13 +10,122 @@ const BudgetTransfer = require('../models/BudgetTransfer');
 const BudgetRevision = require('../models/BudgetRevision');
 const BudgetAlert = require('../models/BudgetAlert');
 const Encumbrance = require('../models/Encumbrance');
+const BudgetActualConsumption = require('../models/BudgetActualConsumption');
 const Expense = require('../models/Expense');
 const BudgetWorkflowConfig = require('../models/BudgetWorkflowConfig');
+const Project = require('../models/Project');
+const projectService = require('./projectService');
 const { aggregateWithTimeout } = require('../utils/mongoAggregation');
 
 const BUDGET_OVERRUN_THRESHOLD = 0.9; // 90% utilized = warning
 
 class BudgetService {
+  static async recordActualConsumption(data) {
+    const amount = parseFloat(data.amount);
+    if (!amount || amount <= 0) {
+      return null;
+    }
+
+    const record = new BudgetActualConsumption({
+      company_id: data.company_id,
+      budget_id: data.budget_id,
+      budget_line_id: data.budget_line_id,
+      account_id: data.account_id,
+      project_id: data.project_id || null,
+      wbs_code: data.wbs_code || null,
+      origin_type: data.origin_type || 'direct_actual',
+      document_type: data.document_type,
+      document_id: data.document_id?.toString(),
+      document_number: data.document_number || data.document_id?.toString() || '',
+      document_date: data.document_date ? new Date(data.document_date) : new Date(),
+      amount,
+      source_type: data.source_type || '',
+      source_id: data.source_id?.toString() || '',
+      source_number: data.source_number || '',
+      notes: data.notes || '',
+      created_by: data.created_by || null,
+    });
+
+    await record.save();
+    return record;
+  }
+
+  static async applyActualConsumptionToLine({
+    companyId,
+    budgetLineId,
+    amount,
+    reduceEncumbered = false,
+    origin_type = 'direct_actual',
+    document_type,
+    document_id,
+    document_number,
+    document_date,
+    source_type,
+    source_id,
+    source_number,
+    notes,
+    created_by,
+  }) {
+    const numericAmount = parseFloat(amount);
+    if (!numericAmount || numericAmount <= 0) {
+      return null;
+    }
+
+    const budgetLine = await BudgetLine.findById(budgetLineId);
+    if (!budgetLine) {
+      throw new Error(`BUDGET_LINE_NOT_FOUND:${budgetLineId}`);
+    }
+
+    const currentEncumbered = parseFloat(budgetLine.encumbered_amount?.toString() || '0');
+    const currentActual = parseFloat(budgetLine.actual_amount?.toString() || '0');
+
+    if (reduceEncumbered) {
+      budgetLine.encumbered_amount = Math.max(0, currentEncumbered - numericAmount).toString();
+    }
+    budgetLine.actual_amount = (currentActual + numericAmount).toString();
+    await budgetLine.save();
+
+    await this.recordActualConsumption({
+      company_id: companyId,
+      budget_id: budgetLine.budget_id,
+      budget_line_id: budgetLine._id,
+      account_id: budgetLine.account_id,
+      project_id: budgetLine.project_id || null,
+      wbs_code: budgetLine.wbs_code || null,
+      origin_type,
+      document_type,
+      document_id,
+      document_number,
+      document_date,
+      source_type,
+      source_id,
+      source_number,
+      notes,
+      created_by,
+    });
+
+    if (budgetLine.project_id) {
+      await projectService.updateBudgetSpentForProjects(companyId, [budgetLine.project_id]);
+    }
+
+    return budgetLine;
+  }
+
+  static async getActualConsumptions(companyId, budgetId, filters = {}) {
+    const query = { company_id: companyId, budget_id: budgetId };
+
+    if (filters.budget_line_id) {
+      query.budget_line_id = filters.budget_line_id;
+    }
+    if (filters.account_id) {
+      query.account_id = filters.account_id;
+    }
+
+    return BudgetActualConsumption.find(query)
+      .populate('account_id', 'code name type')
+      .populate('created_by', 'name email')
+      .sort({ document_date: -1, createdAt: -1 });
+  }
 
   // ── CREATE ───────────────────────────────────────────────────────────
   static async create(companyId, data, userId) {
@@ -306,7 +415,10 @@ class BudgetService {
       throw new Error('BUDGET_VIEW_ONLY');
     }
 
-    // Validate every account belongs to this company
+    const affectedProjectIds = new Set();
+    const projectById = new Map();
+
+    // Validate every account and project belongs to this company
     for (const line of lines) {
       const account = await ChartOfAccount.findOne({
         _id: line.account_id,
@@ -316,35 +428,59 @@ class BudgetService {
       if (!account) {
         throw new Error('ACCOUNT_NOT_FOUND');
       }
+
+      if (line.project_id) {
+        const project = await Project.findOne({
+          _id: line.project_id,
+          company_id: companyId,
+          is_active: true
+        }).select('_id wbs_code');
+
+        if (!project) {
+          throw new Error('PROJECT_NOT_FOUND');
+        }
+
+        projectById.set(line.project_id.toString(), project);
+        affectedProjectIds.add(line.project_id.toString());
+      }
     }
 
     // Bulk upsert using MongoDB updateOne with upsert: true
-    const ops = lines.map(line => ({
-      updateOne: {
-        filter: {
-          company_id: companyId,
-          budget_id: budgetId,
-          account_id: line.account_id,
-          period_month: line.period_month,
-          period_year: line.period_year
-        },
-        update: {
-          $set: {
-            budgeted_amount: line.budgeted_amount,
+    const ops = lines.map(line => {
+      const projectId = line.project_id || null;
+      const project = projectId ? projectById.get(projectId.toString()) : null;
+
+      return {
+        updateOne: {
+          filter: {
             company_id: companyId,
             budget_id: budgetId,
             account_id: line.account_id,
+            project_id: projectId,
             period_month: line.period_month,
-            period_year: line.period_year,
-            category: line.category || '',
-            notes: line.notes || ''
-          }
-        },
-        upsert: true
-      }
-    }));
+            period_year: line.period_year
+          },
+          update: {
+            $set: {
+              budgeted_amount: line.budgeted_amount,
+              company_id: companyId,
+              budget_id: budgetId,
+              account_id: line.account_id,
+              project_id: projectId,
+              wbs_code: project ? project.wbs_code : null,
+              period_month: line.period_month,
+              period_year: line.period_year,
+              category: line.category || '',
+              notes: line.notes || ''
+            }
+          },
+          upsert: true
+        }
+      };
+    });
 
     await BudgetLine.bulkWrite(ops);
+    await projectService.updateBudgetSpentForProjects(companyId, [...affectedProjectIds]);
     return { upserted: lines.length };
   }
 
@@ -355,7 +491,9 @@ class BudgetService {
     if (filters.period_year) query.period_year = filters.period_year;
     if (filters.period_month) query.period_month = filters.period_month;
 
-    return BudgetLine.find(query).populate('account_id');
+    return BudgetLine.find(query)
+      .populate('account_id')
+      .populate('project_id', 'name project_code wbs_code status');
   }
 
   // ── APPROVE ──────────────────────────────────────────────────────────
@@ -656,6 +794,10 @@ class BudgetService {
         period_month: line.period_month,
         period_year: line.period_year,
         budgeted_amount: line.budgeted_amount,
+        encumbered_amount: line.encumbered_amount || 0,
+        actual_amount: line.actual_amount || 0,
+        project_id: line.project_id || null,
+        wbs_code: line.wbs_code || null,
         notes: line.notes
       }));
 
@@ -771,6 +913,10 @@ class BudgetService {
           period_month: line.period_month,
           period_year: line.period_year,
           budgeted_amount: adjustedLineAmount,
+          encumbered_amount: line.encumbered_amount || 0,
+          actual_amount: line.actual_amount || 0,
+          project_id: line.project_id || null,
+          wbs_code: line.wbs_code || null,
           notes: line.notes
         };
       });
@@ -2931,6 +3077,23 @@ class BudgetService {
     encumbrance.liquidated_at = new Date();
     await encumbrance.save();
 
+    await this.applyActualConsumptionToLine({
+      companyId: expense.company || expense.company_id,
+      budgetLineId: encumbrance.budget_line_id,
+      amount: totalAmount,
+      reduceEncumbered: true,
+      origin_type: 'encumbrance_liquidation',
+      document_type: paymentInfo.document_type || 'expense_payment',
+      document_id: paymentInfo.document_id || expense._id.toString(),
+      document_number: paymentInfo.document_number || expense.reference_no,
+      document_date: paymentInfo.date || new Date(),
+      source_type: encumbrance.source_type,
+      source_id: encumbrance.source_id,
+      source_number: encumbrance.source_number,
+      notes: paymentInfo.notes || 'Full liquidation from expense payment',
+      created_by: userId,
+    });
+
     return {
       encumbrance_id: encumbrance._id,
       liquidated_amount: totalAmount,
@@ -3120,17 +3283,23 @@ class BudgetService {
 
     await encumbrance.save();
 
-    // Update budget line: reduce encumbered, increase actual (consume budget)
     if (encumbrance.budget_line_id) {
-      const budgetLine = await BudgetLine.findById(encumbrance.budget_line_id);
-      if (budgetLine) {
-        const currentEncumbered = parseFloat(budgetLine.encumbered_amount?.toString() || '0');
-        const currentActual = parseFloat(budgetLine.actual_amount?.toString() || '0');
-
-        budgetLine.encumbered_amount = Math.max(0, currentEncumbered - liquidationAmount).toString();
-        budgetLine.actual_amount = (currentActual + liquidationAmount).toString();
-        await budgetLine.save();
-      }
+      await this.applyActualConsumptionToLine({
+        companyId,
+        budgetLineId: encumbrance.budget_line_id,
+        amount: liquidationAmount,
+        reduceEncumbered: true,
+        origin_type: 'encumbrance_liquidation',
+        document_type,
+        document_id,
+        document_number: document_number || document_id.toString(),
+        document_date: date || new Date(),
+        source_type: encumbrance.source_type,
+        source_id: encumbrance.source_id,
+        source_number: encumbrance.source_number,
+        notes: notes || '',
+        created_by: userId,
+      });
     }
 
     return encumbrance;
@@ -3145,9 +3314,14 @@ class BudgetService {
     if (filters.account_id) {
       query.account_id = filters.account_id;
     }
+    if (filters.budget_line_id) {
+      query.budget_line_id = filters.budget_line_id;
+    }
 
     return Encumbrance.find(query)
       .populate('account_id', 'code name type')
+      .populate('created_by', 'name email')
+      .populate('released_by', 'name email')
       .sort({ encumbrance_date: -1 });
   }
 

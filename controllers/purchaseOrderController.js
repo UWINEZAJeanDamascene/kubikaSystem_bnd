@@ -417,8 +417,6 @@ exports.recordPOPayment = async (req, res, next) => {
     // Liquidate encumbrances when PO is paid (fully or partially)
     try {
       const Encumbrance = require('../models/Encumbrance');
-      const BudgetLine = require('../models/BudgetLine');
-
       const encumbrances = await Encumbrance.find({
         source_type: 'purchase_order',
         source_id: po._id.toString(),
@@ -461,22 +459,26 @@ exports.recordPOPayment = async (req, res, next) => {
 
         await encumbrance.save();
 
-        // Update budget line: reduce encumbered, increase actual (consume budget)
         if (!encumbrance.budget_line_id) {
           throw new Error('Encumbrance missing budget_line_id');
         }
-        
-        const budgetLine = await BudgetLine.findById(encumbrance.budget_line_id);
-        if (!budgetLine) {
-          throw new Error(`BudgetLine not found: ${encumbrance.budget_line_id}`);
-        }
-        
-        const currentEncumbered = Number(budgetLine.encumbered_amount?.toString() || 0);
-        const currentActual = Number(budgetLine.actual_amount?.toString() || 0);
 
-        budgetLine.encumbered_amount = Math.max(0, currentEncumbered - liquidationAmount);
-        budgetLine.actual_amount = currentActual + liquidationAmount;
-        await budgetLine.save();
+        await BudgetService.applyActualConsumptionToLine({
+          companyId,
+          budgetLineId: encumbrance.budget_line_id,
+          amount: liquidationAmount,
+          reduceEncumbered: true,
+          origin_type: 'encumbrance_liquidation',
+          document_type: 'purchase_order_payment',
+          document_id: po._id.toString(),
+          document_number: po.referenceNo || `PO-${po._id.toString().slice(-5)}`,
+          document_date: new Date(),
+          source_type: encumbrance.source_type,
+          source_id: encumbrance.source_id,
+          source_number: encumbrance.source_number,
+          notes: `PO payment - reference: ${reference || 'N/A'}, method: ${paymentMethod || 'N/A'}`,
+          created_by: req.user.id,
+        });
       }
     } catch (encErr) {
       console.error('Error liquidating encumbrances for PO payment:', encErr);

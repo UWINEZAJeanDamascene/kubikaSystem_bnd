@@ -81,6 +81,7 @@ async function initializeServer() {
   require('./models/BankAccount');
   require('./models/Encumbrance');
   require('./models/BudgetLine');
+  require('./models/Project');
   require('./models/StockTransfer');
   require('./models/StockTransferLine');
   require('./models/StockBatch');
@@ -243,6 +244,7 @@ async function initializeServer() {
   apiRouter.use('/asset-categories', require('./routes/assetCategoryRoutes'));
   apiRouter.use('/loans', require('./routes/loanRoutes'));
   apiRouter.use('/budgets', require('./routes/budgetRoutes'));
+  apiRouter.use('/projects', require('./routes/projectRoutes'));
   apiRouter.use('/taxes', require('./routes/taxRoutes'));
   apiRouter.use('/payroll', require('./routes/payrollRoutes'));
   apiRouter.use('/payroll-runs', require('./routes/payrollRunRoutes'));

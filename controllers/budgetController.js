@@ -143,6 +143,11 @@ exports.upsertLines = async (req, res) => {
         .status(400)
         .json({ error: "Account not found or belongs to different company" });
     }
+    if (error.message === "PROJECT_NOT_FOUND") {
+      return res
+        .status(400)
+        .json({ error: "Project not found or belongs to different company" });
+    }
     res.status(400).json({ error: error.message });
   }
 };
@@ -657,10 +662,30 @@ exports.getEncumbrances = async (req, res) => {
   try {
     const companyId = req.user.company._id;
     const { id } = req.params;
-    const { status, account_id } = req.query;
+    const { status, account_id, budget_line_id } = req.query;
 
-    const encumbrances = await BudgetService.getEncumbrances(companyId, id, { status, account_id });
+    const encumbrances = await BudgetService.getEncumbrances(companyId, id, {
+      status,
+      account_id,
+      budget_line_id,
+    });
     res.json({ success: true, data: encumbrances });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+};
+
+exports.getActualConsumptions = async (req, res) => {
+  try {
+    const companyId = req.user.company._id;
+    const { id } = req.params;
+    const { account_id, budget_line_id } = req.query;
+
+    const consumptions = await BudgetService.getActualConsumptions(companyId, id, {
+      account_id,
+      budget_line_id,
+    });
+    res.json({ success: true, data: consumptions });
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
