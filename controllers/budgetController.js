@@ -619,14 +619,15 @@ exports.createEncumbrance = async (req, res) => {
     const companyId = req.user.company._id;
     const userId = req.user.id;
     const { id } = req.params;
-    const { account_id, source_type, source_id, source_number, description, amount, expected_liquidation_date, notes } = req.body;
+    const { budget_line_id, account_id, source_type, source_id, source_number, description, amount, expected_liquidation_date, notes } = req.body;
 
-    if (!account_id || !source_type || !source_id || !amount || !description) {
-      return res.status(400).json({ error: "account_id, source_type, source_id, amount, and description are required" });
+    if (!budget_line_id || !account_id || !source_type || !source_id || !amount || !description) {
+      return res.status(400).json({ error: "budget_line_id, account_id, source_type, source_id, amount, and description are required" });
     }
 
     const encumbrance = await BudgetService.createEncumbrance(companyId, {
       budget_id: id,
+      budget_line_id,
       account_id,
       source_type,
       source_id,
@@ -813,8 +814,11 @@ exports.submitForApproval = async (req, res) => {
     if (error.message === "BUDGET_NOT_FOUND") {
       return res.status(404).json({ error: "Budget not found" });
     }
-    if (error.message === "APPROVAL_ALREADY_PENDING") {
+    if (error.message === "APPROVAL_ALREADY_PENDING" || error.message === "ALREADY_PENDING_APPROVAL") {
       return res.status(400).json({ error: "An approval is already pending for this item" });
+    }
+    if (error.message === "APPROVER_NOT_AUTHORIZED") {
+      return res.status(403).json({ error: "You are not authorized to approve the current workflow step" });
     }
     res.status(400).json({ error: error.message });
   }
@@ -836,6 +840,12 @@ exports.approveStep = async (req, res) => {
     }
     if (error.message === "APPROVAL_NOT_ACTIVE") {
       return res.status(400).json({ error: "Approval is not in an active state" });
+    }
+    if (error.message === "APPROVER_NOT_AUTHORIZED") {
+      return res.status(403).json({ error: "You are not authorized to approve the current workflow step" });
+    }
+    if (error.message === "APPROVAL_STEP_NOT_FOUND") {
+      return res.status(400).json({ error: "Current approval step was not found" });
     }
     if (error.message === "ALREADY_APPROVED") {
       return res.status(400).json({ error: "You have already approved this step" });

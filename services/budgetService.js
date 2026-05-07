@@ -14,12 +14,77 @@ const BudgetActualConsumption = require('../models/BudgetActualConsumption');
 const Expense = require('../models/Expense');
 const BudgetWorkflowConfig = require('../models/BudgetWorkflowConfig');
 const Project = require('../models/Project');
+const User = require('../models/User');
+const Role = require('../models/Role');
 const projectService = require('./projectService');
 const { aggregateWithTimeout } = require('../utils/mongoAggregation');
 
 const BUDGET_OVERRUN_THRESHOLD = 0.9; // 90% utilized = warning
 
+const MANAGER_ROLES = new Set([
+  'manager',
+  'department_head',
+  'finance_manager',
+  'director',
+  'cfo',
+  'ceo',
+  'admin',
+  'company_admin',
+]);
+
+const normalizeRoleName = (name) => String(name || '').trim().toLowerCase().replace(/\s+/g, '_');
+
 class BudgetService {
+  static async canUserApproveWorkflowStep(companyId, approval, step, userId) {
+    const user = await User.findOne({ _id: userId, company: companyId })
+      .populate('roles', 'name')
+      .select('role roles department');
+
+    if (!user) return false;
+    if (user.role === 'platform_admin' || user.role === 'admin' || user.role === 'company_admin') {
+      return true;
+    }
+
+    const roleNames = new Set();
+    if (user.role) roleNames.add(user.role);
+    if (Array.isArray(user.roles)) {
+      user.roles.forEach((role) => {
+        if (role?.name) roleNames.add(role.name);
+      });
+    }
+
+    if (!roleNames.size && user.role) {
+      const roleDoc = await Role.findOne({ name: user.role, company_id: companyId }).select('name');
+      if (roleDoc?.name) roleNames.add(roleDoc.name);
+    }
+
+    const normalizedRoleNames = new Set(Array.from(roleNames).map(normalizeRoleName));
+    const approverType = step.approver_type;
+
+    if (approverType === 'user' || approverType === 'specific_user') {
+      return Boolean(step.approver_id && step.approver_id.toString() === userId.toString());
+    }
+
+    if (approverType === 'role') {
+      return Boolean(step.approver_role && normalizedRoleNames.has(normalizeRoleName(step.approver_role)));
+    }
+
+    if (approverType === 'any_manager') {
+      return Array.from(normalizedRoleNames).some((role) => MANAGER_ROLES.has(role));
+    }
+
+    if (approverType === 'department_head') {
+      if (normalizedRoleNames.has('department_head')) {
+        const budget = await Budget.findOne({ _id: approval.budget_id, company_id: companyId }).select('department');
+        if (!budget?.department || !user.department) return true;
+        return budget.department.toString() === user.department.toString();
+      }
+      return false;
+    }
+
+    return false;
+  }
+
   static async recordActualConsumption(data) {
     const amount = parseFloat(data.amount);
     if (!amount || amount <= 0) {
@@ -2384,6 +2449,21 @@ class BudgetService {
       throw new Error('APPROVAL_NOT_ACTIVE');
     }
 
+    const currentStep = approval.steps[approval.current_step - 1];
+    if (!currentStep) {
+      throw new Error('APPROVAL_STEP_NOT_FOUND');
+    }
+
+    const canApprove = await BudgetService.canUserApproveWorkflowStep(
+      companyId,
+      approval,
+      currentStep,
+      userId,
+    );
+    if (!canApprove) {
+      throw new Error('APPROVER_NOT_AUTHORIZED');
+    }
+
     // Check if user already approved this step
     const alreadyApproved = approval.actions.some(
       a => a.step_number === approval.current_step &&
@@ -3207,7 +3287,7 @@ class BudgetService {
       company_id: companyId,
       budget_id: budget_id,
       budget_line_id: budget_line_id,
-      account_id: account_id,
+      account_id: budgetLine.account_id,
       source_type: source_type,
       source_id: source_id.toString(),
       source_number: source_number || source_id.toString(),

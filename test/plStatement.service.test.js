@@ -260,8 +260,81 @@ describe('PLStatementService', () => {
       );
 
       // gross = 500 - 200 = 300
-      // net = 300 - 100 = 200
-      expect(report.current.net_profit).toBe(200);
+      // PBT = 300 - 100 = 200
+      // tax = 30% x 200 = 60
+      // net = 200 - 60 = 140
+      expect(report.current.profit_before_tax).toBe(200);
+      expect(report.current.tax.total).toBe(60);
+      expect(report.current.net_profit).toBe(140);
+    });
+
+    it('computes 30% corporate income tax when no posted tax journal exists', async () => {
+      await JournalEntry.create({
+        company: companyA._id,
+        entryNumber: 'JE-001',
+        date: new Date('2024-06-15'),
+        description: 'Sale',
+        status: 'posted',
+        lines: [
+          { accountCode: '1100', accountName: 'Cash', debit: 500, credit: 0 },
+          { accountCode: '4100', accountName: 'Sales', debit: 0, credit: 500 }
+        ]
+      });
+
+      const report = await PLStatementService.generate(
+        companyA._id.toString(),
+        { dateFrom: '2024-01-01', dateTo: '2024-12-31' }
+      );
+
+      expect(report.current.profit_before_tax).toBe(500);
+      expect(report.current.tax.total).toBe(150);
+      expect(report.current.computed_tax).toBe(true);
+      expect(report.current.net_profit).toBe(350);
+    });
+
+    it('subtracts posted income tax expense from profit before tax', async () => {
+      const taxAccount = await ChartOfAccount.create({
+        company: companyA._id,
+        code: '6400',
+        name: 'Corporate Tax',
+        type: 'expense',
+        subtype: 'tax',
+        normal_balance: 'debit',
+        isActive: true
+      });
+
+      await JournalEntry.create({
+        company: companyA._id,
+        entryNumber: 'JE-001',
+        date: new Date('2024-06-15'),
+        description: 'Sale',
+        status: 'posted',
+        lines: [
+          { accountCode: '1100', accountName: 'Cash', debit: 500, credit: 0 },
+          { accountCode: '4100', accountName: 'Sales', debit: 0, credit: 500 }
+        ]
+      });
+
+      await JournalEntry.create({
+        company: companyA._id,
+        entryNumber: 'JE-002',
+        date: new Date('2024-06-30'),
+        description: 'Tax accrual',
+        status: 'posted',
+        lines: [
+          { accountCode: taxAccount.code, accountName: taxAccount.name, debit: 150, credit: 0 },
+          { accountCode: '1100', accountName: 'Cash', debit: 0, credit: 150 }
+        ]
+      });
+
+      const report = await PLStatementService.generate(
+        companyA._id.toString(),
+        { dateFrom: '2024-01-01', dateTo: '2024-12-31' }
+      );
+
+      expect(report.current.profit_before_tax).toBe(500);
+      expect(report.current.tax.total).toBe(150);
+      expect(report.current.net_profit).toBe(350);
     });
 
     it('gross_margin_pct = (gross_profit / total_revenue) × 100', async () => {
@@ -648,6 +721,25 @@ describe('PLStatementService', () => {
       await expect(
         PLStatementService.generate(companyA._id.toString(), { dateTo: '2024-12-31' })
       ).rejects.toThrow('DATE_RANGE_REQUIRED');
+    });
+
+    it('throws INVALID_DATE_RANGE when start date is after end date', async () => {
+      await expect(
+        PLStatementService.generate(companyA._id.toString(), {
+          dateFrom: '2024-12-31',
+          dateTo: '2024-01-01'
+        })
+      ).rejects.toThrow('INVALID_DATE_RANGE');
+    });
+
+    it('requires both comparative dates when comparing periods', async () => {
+      await expect(
+        PLStatementService.generate(companyA._id.toString(), {
+          dateFrom: '2024-01-01',
+          dateTo: '2024-12-31',
+          comparativeDateFrom: '2023-01-01'
+        })
+      ).rejects.toThrow('COMPARATIVE_DATE_RANGE_REQUIRED');
     });
   });
 });

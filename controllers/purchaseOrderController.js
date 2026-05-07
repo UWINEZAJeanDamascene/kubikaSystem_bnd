@@ -94,15 +94,21 @@ exports.approvePurchaseOrder = async (req, res, next) => {
         const BudgetLine = require('../models/BudgetLine');
         
         const encumbrancePromises = po.lines
-          .filter(line => line.budgetId && line.accountId)
+          .filter(line => line.budgetId && (line.budget_line_id || line.accountId))
           .map(async (line, index) => {
             try {
-              // Find budget line from budgetId and accountId
-              const budgetLine = await BudgetLine.findOne({
-                budget_id: line.budgetId,
-                account_id: line.accountId,
-                company_id: companyId
-              });
+              // Prefer the explicit budget line so project/WBS allocations are not ambiguous.
+              const budgetLine = line.budget_line_id
+                ? await BudgetLine.findOne({
+                    _id: line.budget_line_id,
+                    budget_id: line.budgetId,
+                    company_id: companyId
+                  })
+                : await BudgetLine.findOne({
+                    budget_id: line.budgetId,
+                    account_id: line.accountId,
+                    company_id: companyId
+                  });
 
               if (!budgetLine) {
                 console.log('[PO] No budget line found for budget:', line.budgetId, 'account:', line.accountId);
@@ -123,7 +129,7 @@ exports.approvePurchaseOrder = async (req, res, next) => {
                 {
                   budget_id: line.budgetId,
                   budget_line_id: budget_line_id,
-                  account_id: line.accountId,
+                  account_id: line.accountId || budgetLine.account_id,
                   source_type: "purchase_order",
                   source_id: po._id.toString(),
                   source_number: po.referenceNo || po._id.toString(),

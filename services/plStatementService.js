@@ -36,6 +36,23 @@ const { aggregateWithTimeout } = require("../utils/mongoAggregation");
  * All amounts computed from posted journal entries for the given period.
  */
 class PLStatementService {
+  static _parseDateBoundary(value, boundary) {
+    if (!value) throw new Error("DATE_RANGE_REQUIRED");
+
+    const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(value);
+    const date = dateOnly ? new Date(`${value}T00:00:00.000Z`) : new Date(value);
+
+    if (Number.isNaN(date.getTime())) {
+      throw new Error("INVALID_DATE_RANGE");
+    }
+
+    if (dateOnly && boundary === "end") {
+      date.setUTCHours(23, 59, 59, 999);
+    }
+
+    return date;
+  }
+
   /**
    * Generate P&L Statement report
    * @param {string} companyId
@@ -47,6 +64,27 @@ class PLStatementService {
   ) {
     if (!companyId) throw new Error("COMPANY_ID_REQUIRED");
     if (!dateFrom || !dateTo) throw new Error("DATE_RANGE_REQUIRED");
+    if (
+      PLStatementService._parseDateBoundary(dateFrom, "start") >
+      PLStatementService._parseDateBoundary(dateTo, "end")
+    ) {
+      throw new Error("INVALID_DATE_RANGE");
+    }
+
+    if (
+      (comparativeDateFrom && !comparativeDateTo) ||
+      (!comparativeDateFrom && comparativeDateTo)
+    ) {
+      throw new Error("COMPARATIVE_DATE_RANGE_REQUIRED");
+    }
+    if (
+      comparativeDateFrom &&
+      comparativeDateTo &&
+      PLStatementService._parseDateBoundary(comparativeDateFrom, "start") >
+        PLStatementService._parseDateBoundary(comparativeDateTo, "end")
+    ) {
+      throw new Error("INVALID_COMPARATIVE_DATE_RANGE");
+    }
 
     const [currentPeriod, comparativePeriod] = await Promise.all([
       PLStatementService._buildPeriodData(companyId, dateFrom, dateTo),
@@ -75,9 +113,10 @@ class PLStatementService {
    */
   static async _buildPeriodData(companyId, dateFrom, dateTo) {
     // ── Step 1: Aggregate all journal entry lines by account code ────
-    // Interpret dateTo as inclusive end-of-day so entries on the 'dateTo' are included
-    const dateToInclusive = new Date(dateTo);
-    dateToInclusive.setHours(23, 59, 59, 999);
+    // Interpret YYYY-MM-DD ranges as full UTC business days. Local setHours()
+    // can drop late-day UTC postings for tenants in non-UTC time zones.
+    const dateFromInclusive = PLStatementService._parseDateBoundary(dateFrom, "start");
+    const dateToInclusive = PLStatementService._parseDateBoundary(dateTo, "end");
 
     const accountBalances = await aggregateWithTimeout(JournalEntry, [
       {
@@ -86,7 +125,7 @@ class PLStatementService {
           status: "posted",
           reversed: { $ne: true },
           date: {
-            $gte: new Date(dateFrom),
+            $gte: dateFromInclusive,
             $lte: dateToInclusive,
           },
         },
@@ -182,7 +221,11 @@ class PLStatementService {
         // Purchase Returns (5200, contra) — already negated, reduces COGS
         cogsLines.push(line);
       } else if (type === "expense") {
-        if (subtype === "financial") {
+        if (subtype === "cogs") {
+          // Backward compatibility: older companies/tests stored COGS as
+          // expense + subtype=cogs before the dedicated "cogs" type existed.
+          cogsLines.push(line);
+        } else if (subtype === "financial") {
           // Finance Costs: 6000 (Interest Expense), 6200 (Bank Charges)
           financeCostLines.push(line);
         } else if (subtype === "tax") {
@@ -283,7 +326,9 @@ class PLStatementService {
         shareOfAssociates,
     );
 
-    // Corporate income tax: use journal entries if present, otherwise auto-compute at 30% of PBT
+    // Corporate income tax: use posted/accrued tax journal entries when present.
+    // If no tax entry has been posted, compute the statutory provision at 30%
+    // of positive PBT so the P&L presents profit after income tax.
     const CORPORATE_TAX_RATE = 0.3;
     let totalTax = sumLines(taxLines);
     let computedTax = false;

@@ -277,7 +277,11 @@ budgetWorkflowConfigSchema.statics.findMatchingWorkflow = async function(
     }
 
     // Check department scope
-    if (workflow.department_scope === "specific" && departmentId) {
+    if (workflow.department_scope === "specific") {
+      if (!departmentId) {
+        console.log('[DEBUG]  -> Department required but not provided, skipping');
+        continue;
+      }
       const deptIds = workflow.department_ids.map(id => id.toString());
       if (!deptIds.includes(departmentId.toString())) {
         console.log('[DEBUG]  -> Department mismatch, skipping');

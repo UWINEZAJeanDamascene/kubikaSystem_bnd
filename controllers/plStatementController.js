@@ -46,7 +46,14 @@ const getPLStatement = async (req, res) => {
 
     res.json({ ...cached.data, from_cache: cached.fromCache });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    const validationErrors = new Set([
+      'DATE_RANGE_REQUIRED',
+      'INVALID_DATE_RANGE',
+      'COMPARATIVE_DATE_RANGE_REQUIRED',
+      'INVALID_COMPARATIVE_DATE_RANGE',
+    ]);
+    const status = validationErrors.has(err.message) ? 422 : 500;
+    res.status(status).json({ error: err.message });
   }
 };
 
