@@ -10,6 +10,7 @@ const {
   getPayrollSummary,
   calculatePayroll,
   bulkCreatePayroll,
+  generatePayroll,
   finalisePayroll,
   getPayslip,
   backfillPayrollJournals,
@@ -26,6 +27,9 @@ router.route("/summary").get(getPayrollSummary);
 
 // Bulk create
 router.route("/bulk").post(bulkCreatePayroll);
+
+// Generate payroll from Employee Master (bulk run for all active or selected employees)
+router.route("/generate").post(authorize("admin", "manager"), generatePayroll);
 
 // Backfill missing journal entries for existing finalised/paid payroll records
 // GET  ?dry_run=true  → preview only (no writes)

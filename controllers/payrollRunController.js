@@ -272,6 +272,58 @@ const createFromRecords = async (req, res, next) => {
   }
 };
 
+// @desc    Mark PAYE as remitted (Rwanda RRA compliance)
+// @route   POST /api/payroll-runs/:id/remit-paye
+// @access  Private (admin)
+const remitPaye = async (req, res, next) => {
+  try {
+    const companyId = req.user.company._id;
+    const userId = req.user._id;
+    const payrollRun = await PayrollRunService.remitPaye(companyId, req.params.id, req.body, userId);
+    res.status(200).json({
+      success: true,
+      data: payrollRun,
+      message: "PAYE remitted successfully",
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Mark RSSB contributions as remitted (Rwanda RRA compliance)
+// @route   POST /api/payroll-runs/:id/remit-rssb
+// @access  Private (admin)
+const remitRssb = async (req, res, next) => {
+  try {
+    const companyId = req.user.company._id;
+    const userId = req.user._id;
+    const payrollRun = await PayrollRunService.remitRssb(companyId, req.params.id, req.body, userId);
+    res.status(200).json({
+      success: true,
+      data: payrollRun,
+      message: "RSSB contributions remitted successfully",
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Generate bank transfer data (CSV/Excel/XML for bank upload)
+// @route   GET /api/payroll-runs/:id/bank-transfer
+// @access  Private (admin, manager)
+const generateBankTransfer = async (req, res, next) => {
+  try {
+    const companyId = req.user.company._id;
+    const data = await PayrollRunService.generateBankTransferData(companyId, req.params.id);
+    res.status(200).json({
+      success: true,
+      data,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getPayrollRuns,
   getPayrollRunById,
@@ -282,4 +334,7 @@ module.exports = {
   previewPayrollRun,
   createFromRecords,
   getAvailablePeriods,
+  remitPaye,
+  remitRssb,
+  generateBankTransfer,
 };

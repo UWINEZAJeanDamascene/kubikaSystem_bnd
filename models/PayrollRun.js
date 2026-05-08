@@ -107,15 +107,39 @@ const payrollRunSchema = new mongoose.Schema({
     default: null
   },
 
-  // Employee lines
+  // Employee lines — Rwanda 2025 detailed breakdown
   lines: [
     {
       employee_name: { type: String, required: true },
       employee_id: { type: String, required: true },
+      employee_ref_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee', default: null },
+      // Income components
+      basic_salary: { type: Number, default: 0 },
+      transport_allowance: { type: Number, default: 0 },
+      housing_allowance: { type: Number, default: 0 },
+      other_allowances: { type: Number, default: 0 },
+      overtime: { type: Number, default: 0 },
+      bonuses: { type: Number, default: 0 },
+      commissions: { type: Number, default: 0 },
+      benefits_in_kind: { type: Number, default: 0 },
       gross_salary: { type: Number, required: true },
+      // PAYE
       tax_deduction: { type: Number, required: true },
+      // RSSB Employee deductions
+      rssb_employee_pension: { type: Number, default: 0 },
+      rssb_employee_maternity: { type: Number, default: 0 },
+      rssb_employee_total: { type: Number, default: 0 },
+      // RSSB Employer contributions
+      rssb_employer_pension: { type: Number, default: 0 },
+      rssb_employer_maternity: { type: Number, default: 0 },
+      occupational_hazard: { type: Number, default: 0 },
+      occupational_hazard_rate: { type: Number, default: 2.0 },
+      rssb_employer_total: { type: Number, default: 0 },
+      // Other deductions
+      health_insurance: { type: Number, default: 0 },
+      loan_deductions: { type: Number, default: 0 },
       other_deductions: { type: Number, default: 0 },
-      rssb_employer: { type: Number, default: 0 },
+      total_deductions: { type: Number, default: 0 },
       net_pay: { type: Number, required: true },
       payroll_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Payroll' }
     }
@@ -125,6 +149,30 @@ const payrollRunSchema = new mongoose.Schema({
   employee_count: {
     type: Number,
     default: 0
+  },
+
+  // ── Remittance tracking (Rwanda RRA / RSSB compliance) ──
+  remittance: {
+    paye: {
+      remitted: { type: Boolean, default: false },
+      remitted_date: { type: Date, default: null },
+      reference_no: { type: String, default: null },
+      amount: { type: Number, default: 0 }
+    },
+    rssb: {
+      remitted: { type: Boolean, default: false },
+      remitted_date: { type: Date, default: null },
+      reference_no: { type: String, default: null },
+      amount: { type: Number, default: 0 }
+    }
+  },
+
+  // Bank transfer / payment file generation tracking
+  bank_transfer: {
+    generated: { type: Boolean, default: false },
+    generated_at: { type: Date, default: null },
+    file_name: { type: String, default: null },
+    format: { type: String, enum: ['csv', 'excel', 'xml'], default: 'csv' }
   }
 }, {
   timestamps: true

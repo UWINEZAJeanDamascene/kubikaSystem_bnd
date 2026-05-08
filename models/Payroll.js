@@ -7,7 +7,15 @@ const payrollSchema = new mongoose.Schema({
     ref: 'Company',
     required: true
   },
-  // Employee Information
+  // Reference to Employee Master (preferred path)
+  employee_id: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Employee',
+    index: true,
+    default: null
+  },
+
+  // Employee Information (embedded snapshot for audit immutability)
   employee: {
     employeeId: { type: String, required: true },
     firstName: { type: String, required: true },
@@ -34,7 +42,12 @@ const payrollSchema = new mongoose.Schema({
     transportAllowance: { type: Number, default: 0 },
     housingAllowance: { type: Number, default: 0 },
     otherAllowances: { type: Number, default: 0 },
-    // Gross = Basic + All Allowances
+    // Additional income components
+    overtime: { type: Number, default: 0 },              // Overtime pay (1.5x or 2x hourly rate)
+    bonuses: { type: Number, default: 0 },               // Performance, 13th month, etc.
+    commissions: { type: Number, default: 0 },           // Sales commissions
+    benefitsInKind: { type: Number, default: 0 },       // Taxable: company car, housing, etc.
+    // Gross = Basic + Allowances + Additional Income
     grossSalary: { type: Number, default: 0 }
   },
   
@@ -57,7 +70,8 @@ const payrollSchema = new mongoose.Schema({
   contributions: {
     rssbEmployerPension: { type: Number, default: 0 },   // 6% Employer Pension (RSSB)
     rssbEmployerMaternity: { type: Number, default: 0 },  // 0.3% Employer Maternity (RSSB)
-    occupationalHazard: { type: Number, default: 0 }     // 2% Occupational Hazard (RSSB)
+    occupationalHazard: { type: Number, default: 0 },    // Occupational Hazard (RSSB)
+    occupationalHazardRate: { type: Number, default: 2.0 }  // Configurable 0.2% - 2.0% by industry
   },
   
   // Payroll Period
@@ -156,8 +170,7 @@ payrollSchema.statics.calculatePAYE = function(grossSalary) {
 };
 
 payrollSchema.statics.calculateRSSBEmployeePension = function(grossSalary) {
-  // RSSB Employee Pension: 6% of gross (2025)
-  // Includes transport allowance in contribution base
+  // RSSB Employee Pension: 6% of pension base (basic + transport) (2025)
   return Math.round(grossSalary * 0.06 * 100) / 100;
 };
 
@@ -167,7 +180,7 @@ payrollSchema.statics.calculateRSSBEmployeeMaternity = function(grossSalary) {
 };
 
 payrollSchema.statics.calculateRSSBEmployerPension = function(grossSalary) {
-  // RSSB Employer Pension: 6% of gross (2025)
+  // RSSB Employer Pension: 6% of pension base (basic + transport) (2025)
   // Total pension contribution = 12% (6% employee + 6% employer)
   return Math.round(grossSalary * 0.06 * 100) / 100;
 };
@@ -177,33 +190,53 @@ payrollSchema.statics.calculateRSSBEmployerMaternity = function(grossSalary) {
   return Math.round(grossSalary * 0.003 * 100) / 100;
 };
 
-payrollSchema.statics.calculateOccupationalHazard = function(grossSalary) {
-  // Occupational Hazard: 2% of gross (employer only)
-  return Math.round(grossSalary * 0.02 * 100) / 100;
+payrollSchema.statics.calculateOccupationalHazard = function(grossSalary, rate = 2.0) {
+  // Occupational Hazard: configurable 0.2% - 2.0% of gross (employer only)
+  // Rate varies by industry: agriculture 2%, construction 1.5%, finance 0.2%, etc.
+  const safeRate = Math.max(0.2, Math.min(2.0, rate));
+  return Math.round(grossSalary * (safeRate / 100) * 100) / 100;
 };
 
 payrollSchema.statics.calculatePayroll = function(salaryData) {
-  const { basicSalary, transportAllowance = 0, housingAllowance = 0, otherAllowances = 0 } = salaryData;
-  
-  // Calculate Gross Salary (includes all allowances)
-  // Note: Transport allowance is included in contribution base (2025)
-  const grossSalary = basicSalary + transportAllowance + housingAllowance + otherAllowances;
+  const {
+    basicSalary,
+    transportAllowance = 0,
+    housingAllowance = 0,
+    otherAllowances = 0,
+    overtime = 0,
+    bonuses = 0,
+    commissions = 0,
+    benefitsInKind = 0,
+    industryHazardRate = 2.0,
+    healthInsurance = 0,
+    loanDeductions = 0,
+    otherDeductions = 0
+  } = salaryData;
+
+  // Calculate Gross Salary (includes all income components)
+  const grossSalary = basicSalary + transportAllowance + housingAllowance + otherAllowances + overtime + bonuses + commissions + benefitsInKind;
+
+  // Pension contribution base: Basic Salary + Transport Allowance only (Rwanda 2025)
+  const pensionBase = basicSalary + transportAllowance;
   
   // Calculate Employee Deductions
   const paye = this.calculatePAYE(grossSalary);
-  const rssbEmployeePension = this.calculateRSSBEmployeePension(grossSalary);
-  const rssbEmployeeMaternity = this.calculateRSSBEmployeeMaternity(grossSalary);
+  const rssbEmployeePension = this.calculateRSSBEmployeePension(pensionBase);
+  const rssbEmployeeMaternity = this.calculateRSSBEmployeeMaternity(pensionBase);
   
+  // Additional employee-side deductions (if provided)
+  const rssbPensionTotal = rssbEmployeePension + rssbEmployeeMaternity;
+
   // Total Employee Deductions
-  const totalDeductions = paye + rssbEmployeePension + rssbEmployeeMaternity;
-  
+  const totalDeductions = paye + rssbPensionTotal + healthInsurance + loanDeductions + otherDeductions;
+
   // Calculate Net Pay
   const netPay = grossSalary - totalDeductions;
-  
+
   // Calculate Employer Contributions (2025 rates)
-  const rssbEmployerPension = this.calculateRSSBEmployerPension(grossSalary);
-  const rssbEmployerMaternity = this.calculateRSSBEmployerMaternity(grossSalary);
-  const occupationalHazard = this.calculateOccupationalHazard(grossSalary);
+  const rssbEmployerPension = this.calculateRSSBEmployerPension(pensionBase);
+  const rssbEmployerMaternity = this.calculateRSSBEmployerMaternity(pensionBase);
+  const occupationalHazard = this.calculateOccupationalHazard(grossSalary, industryHazardRate);
   
   // Total Employer Cost (Gross + Employer contributions)
   // 2025: Pension is 12% total (6% employee + 6% employer)
@@ -215,13 +248,24 @@ payrollSchema.statics.calculatePayroll = function(salaryData) {
       paye: Math.round(paye * 100) / 100,
       rssbEmployeePension: Math.round(rssbEmployeePension * 100) / 100,
       rssbEmployeeMaternity: Math.round(rssbEmployeeMaternity * 100) / 100,
+      rssbPensionTotal: Math.round(rssbPensionTotal * 100) / 100,
+      healthInsurance: Math.round(healthInsurance * 100) / 100,
+      loanDeductions: Math.round(loanDeductions * 100) / 100,
+      otherDeductions: Math.round(otherDeductions * 100) / 100,
       totalDeductions: Math.round(totalDeductions * 100) / 100
     },
     contributions: {
       rssbEmployerPension: Math.round(rssbEmployerPension * 100) / 100,
       rssbEmployerMaternity: Math.round(rssbEmployerMaternity * 100) / 100,
       occupationalHazard: Math.round(occupationalHazard * 100) / 100,
+      occupationalHazardRate: industryHazardRate,
       totalEmployerCost: Math.round(totalEmployerCost * 100) / 100
+    },
+    additionalIncome: {
+      overtime: Math.round(overtime * 100) / 100,
+      bonuses: Math.round(bonuses * 100) / 100,
+      commissions: Math.round(commissions * 100) / 100,
+      benefitsInKind: Math.round(benefitsInKind * 100) / 100
     },
     netPay: Math.round(netPay * 100) / 100
   };
@@ -267,8 +311,60 @@ payrollSchema.pre('save', function(next) {
   next();
 });
 
+// Populate payroll from Employee Master + effective SalaryHistory
+payrollSchema.statics.fromEmployeeMaster = function (employee, salaryHistory, period) {
+  if (!employee || !salaryHistory) {
+    throw new Error('Employee and salary history are required');
+  }
+
+  const s = salaryHistory;
+  const salaryData = {
+    basicSalary: s.basicSalary || 0,
+    transportAllowance: s.transportAllowance || 0,
+    housingAllowance: s.housingAllowance || 0,
+    otherAllowances: s.otherAllowances || 0,
+  };
+
+  const calculated = this.calculatePayroll(salaryData);
+
+  return {
+    employee_id: employee._id,
+    employee: {
+      employeeId: employee.employeeId,
+      firstName: employee.firstName,
+      lastName: employee.lastName,
+      email: employee.email || undefined,
+      phone: employee.phone || undefined,
+      department: employee.department || undefined,
+      position: employee.position || undefined,
+      nationalId: employee.nationalId || undefined,
+      bankName: employee.bankName || undefined,
+      bankAccount: employee.bankAccount || undefined,
+      employmentType: employee.employmentType || 'full-time',
+      startDate: employee.hireDate || undefined,
+      isActive: employee.status === 'active',
+    },
+    salary: {
+      basicSalary: salaryData.basicSalary,
+      transportAllowance: salaryData.transportAllowance,
+      housingAllowance: salaryData.housingAllowance,
+      otherAllowances: salaryData.otherAllowances,
+      grossSalary: calculated.grossSalary,
+    },
+    deductions: calculated.deductions,
+    netPay: calculated.netPay,
+    contributions: calculated.contributions,
+    period: {
+      month: period.month,
+      year: period.year,
+      monthName: this.getMonthName(period.month),
+    },
+  };
+};
+
 // Index for efficient queries
 payrollSchema.index({ company: 1, 'period.year': 1, 'period.month': 1 });
+payrollSchema.index({ company: 1, employee_id: 1 });
 payrollSchema.index({ company: 1, 'employee.employeeId': 1 });
 
 // Unique index - prevents duplicate payroll for same employee same period same company

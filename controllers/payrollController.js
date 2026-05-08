@@ -1,4 +1,6 @@
 const Payroll = require("../models/Payroll");
+const Employee = require("../models/Employee");
+const SalaryHistory = require("../models/SalaryHistory");
 const User = require("../models/User");
 const JournalService = require("../services/journalService");
 const TaxAutomationService = require("../services/taxAutomationService");
@@ -119,22 +121,109 @@ exports.createPayroll = async (req, res, next) => {
     const companyId = req.user.company._id;
     const userId = req.user._id;
 
-    const { employee, salary, period, notes } = req.body;
+    const { employee_id, employee, salary, salaryOverrides, period, notes } = req.body;
+
+    let employeeSnapshot = employee;
+    let salaryData = salary;
+    let linkedEmployeeId = null;
+
+    // ── Path A: Create from Employee Master (preferred) ─────────────
+    if (employee_id) {
+      const emp = await Employee.findOne({
+        _id: employee_id,
+        company: companyId,
+      });
+
+      if (!emp) {
+        return res.status(404).json({
+          success: false,
+          message: "Employee master record not found",
+        });
+      }
+
+      // Determine pay period boundaries
+      const payPeriodStart = new Date(period.year, period.month - 1, 1);
+      const payPeriodEnd = new Date(period.year, period.month, 0);
+
+      // Reject if terminated before period starts
+      if (emp.status === "terminated" && emp.terminationDate && new Date(emp.terminationDate) < payPeriodStart) {
+        return res.status(400).json({
+          success: false,
+          message: "Employee was terminated before this pay period",
+        });
+      }
+
+      // Get effective salary for the period
+      let effectiveSalary = await SalaryHistory.getEffectiveSalary(emp._id, payPeriodStart);
+
+      // Fallback: if no salary history but manual salary data provided, use it directly
+      if (!effectiveSalary && salary && typeof salary.basicSalary === "number") {
+        effectiveSalary = {
+          basicSalary: salary.basicSalary || 0,
+          transportAllowance: salary.transportAllowance || 0,
+          housingAllowance: salary.housingAllowance || 0,
+          otherAllowances: salary.otherAllowances || 0,
+          occupationalHazardRate: typeof salary.occupationalHazardRate === "number" ? salary.occupationalHazardRate : 2,
+        };
+      }
+
+      if (!effectiveSalary) {
+        return res.status(400).json({
+          success: false,
+          message: "No active salary history found for this employee for the selected period. Please set a salary first.",
+        });
+      }
+
+      // Build from master
+      const fromMaster = Payroll.fromEmployeeMaster(emp, effectiveSalary, period);
+      employeeSnapshot = fromMaster.employee;
+      salaryData = fromMaster.salary;
+      linkedEmployeeId = fromMaster.employee_id;
+
+      // Apply period-specific overrides if provided
+      if (salaryOverrides) {
+        if (typeof salaryOverrides.basicSalary === "number") salaryData.basicSalary = salaryOverrides.basicSalary;
+        if (typeof salaryOverrides.transportAllowance === "number") salaryData.transportAllowance = salaryOverrides.transportAllowance;
+        if (typeof salaryOverrides.housingAllowance === "number") salaryData.housingAllowance = salaryOverrides.housingAllowance;
+        if (typeof salaryOverrides.otherAllowances === "number") salaryData.otherAllowances = salaryOverrides.otherAllowances;
+      }
+
+      // Merge any additional income/deductions from manual salary input
+      if (salary) {
+        if (typeof salary.overtime === "number") salaryData.overtime = salary.overtime;
+        if (typeof salary.bonuses === "number") salaryData.bonuses = salary.bonuses;
+        if (typeof salary.commissions === "number") salaryData.commissions = salary.commissions;
+        if (typeof salary.benefitsInKind === "number") salaryData.benefitsInKind = salary.benefitsInKind;
+        if (typeof salary.healthInsurance === "number") salaryData.healthInsurance = salary.healthInsurance;
+        if (typeof salary.loanDeductions === "number") salaryData.loanDeductions = salary.loanDeductions;
+        if (typeof salary.otherDeductions === "number") salaryData.otherDeductions = salary.otherDeductions;
+        if (typeof salary.occupationalHazardRate === "number") salaryData.occupationalHazardRate = salary.occupationalHazardRate;
+      }
+    }
+
+    // ── Path B: Legacy manual entry (backward compat) ────────────────
+    if (!employeeSnapshot || !salaryData || !salaryData.basicSalary) {
+      return res.status(400).json({
+        success: false,
+        message: "Employee information and salary are required",
+      });
+    }
 
     // Calculate payroll using Rwanda tax rules
-    const calculated = Payroll.calculatePayroll(salary);
+    const calculated = Payroll.calculatePayroll(salaryData);
 
     const payroll = new Payroll({
       company: companyId,
+      employee_id: linkedEmployeeId,
       employee: {
-        ...employee,
-        isActive: true,
+        ...employeeSnapshot,
+        isActive: employeeSnapshot.isActive !== undefined ? employeeSnapshot.isActive : true,
       },
       salary: {
-        basicSalary: salary.basicSalary,
-        transportAllowance: salary.transportAllowance || 0,
-        housingAllowance: salary.housingAllowance || 0,
-        otherAllowances: salary.otherAllowances || 0,
+        basicSalary: salaryData.basicSalary,
+        transportAllowance: salaryData.transportAllowance || 0,
+        housingAllowance: salaryData.housingAllowance || 0,
+        otherAllowances: salaryData.otherAllowances || 0,
         grossSalary: calculated.grossSalary,
       },
       deductions: {
@@ -780,6 +869,122 @@ exports.bulkCreatePayroll = async (req, res, next) => {
   }
 };
 
+// @desc    Generate payroll for all active employees (or selected subset)
+// @route   POST /api/payroll/generate
+// @access  Private (admin, manager)
+exports.generatePayroll = async (req, res, next) => {
+  try {
+    const companyId = req.user.company._id;
+    const userId = req.user._id;
+
+    const { period, employeeIds, payrollRunId } = req.body;
+
+    if (!period || !period.month || !period.year) {
+      return res.status(400).json({
+        success: false,
+        message: "period.month and period.year are required",
+      });
+    }
+
+    const payPeriodStart = new Date(period.year, period.month - 1, 1);
+    const payPeriodEnd = new Date(period.year, period.month, 0);
+
+    // Build employee query
+    const empQuery = { company: companyId };
+    if (employeeIds && Array.isArray(employeeIds) && employeeIds.length > 0) {
+      empQuery._id = { $in: employeeIds };
+    } else {
+      empQuery.status = "active";
+    }
+
+    const employees = await Employee.find(empQuery).lean();
+    const createdRecords = [];
+    const errors = [];
+
+    for (const emp of employees) {
+      try {
+        // Skip if hire date is after period end
+        if (emp.hireDate && new Date(emp.hireDate) > payPeriodEnd) {
+          errors.push({
+            employeeId: emp.employeeId,
+            name: `${emp.firstName} ${emp.lastName}`,
+            reason: "Hire date is after the pay period",
+          });
+          continue;
+        }
+
+        // Skip if terminated before period starts
+        if (emp.status === "terminated" && emp.terminationDate && new Date(emp.terminationDate) < payPeriodStart) {
+          errors.push({
+            employeeId: emp.employeeId,
+            name: `${emp.firstName} ${emp.lastName}`,
+            reason: "Terminated before the pay period",
+          });
+          continue;
+        }
+
+        // Get effective salary for the period
+        const effectiveSalary = await SalaryHistory.getEffectiveSalary(emp._id, payPeriodStart);
+        if (!effectiveSalary) {
+          errors.push({
+            employeeId: emp.employeeId,
+            name: `${emp.firstName} ${emp.lastName}`,
+            reason: "No active salary history for the selected period",
+          });
+          continue;
+        }
+
+        // Build payroll from master
+        const fromMaster = Payroll.fromEmployeeMaster(emp, effectiveSalary, period);
+
+        // Assemble full payroll document
+        const payrollDoc = {
+          company: companyId,
+          employee_id: fromMaster.employee_id,
+          employee: fromMaster.employee,
+          salary: fromMaster.salary,
+          deductions: fromMaster.deductions,
+          netPay: fromMaster.netPay,
+          contributions: fromMaster.contributions,
+          period: fromMaster.period,
+          payroll_run_id: payrollRunId || null,
+          pay_period_start: payPeriodStart,
+          pay_period_end: payPeriodEnd,
+          createdBy: userId,
+        };
+
+        const payroll = new Payroll(payrollDoc);
+        await payroll.save();
+        createdRecords.push(payroll);
+      } catch (err) {
+        // Catch duplicate key (employee already has payroll for this period)
+        if (err.code === 11000) {
+          errors.push({
+            employeeId: emp.employeeId,
+            name: `${emp.firstName} ${emp.lastName}`,
+            reason: "Payroll already exists for this employee and period",
+          });
+        } else {
+          errors.push({
+            employeeId: emp.employeeId,
+            name: `${emp.firstName} ${emp.lastName}`,
+            reason: err.message || "Unknown error",
+          });
+        }
+      }
+    }
+
+    res.status(201).json({
+      success: true,
+      count: createdRecords.length,
+      errors: errors.length > 0 ? errors : undefined,
+      data: createdRecords,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 // @desc    Finalise payroll record (ready for PayrollRun)
 // @route   POST /api/payroll/:id/finalise
 // @access  Private (admin, manager)
@@ -883,6 +1088,41 @@ exports.finalisePayroll = async (req, res, next) => {
                 "2240",
               rssbEmployee,
               `RSSB employee deduction — ${employeeName}`,
+            ),
+          );
+        }
+
+        // Credit other employee deductions (health insurance, loans, other)
+        const healthInsurance = payroll.deductions?.healthInsurance || 0;
+        const loanDeductions = payroll.deductions?.loanDeductions || 0;
+        const otherDeductions = payroll.deductions?.otherDeductions || 0;
+
+        if (healthInsurance > 0) {
+          lines1.push(
+            JournalService.createCreditLine(
+              DEFAULT_ACCOUNTS.accruedExpenses || "2600",
+              healthInsurance,
+              `Health Insurance Payable — ${employeeName}`,
+            ),
+          );
+        }
+
+        if (loanDeductions > 0) {
+          lines1.push(
+            JournalService.createCreditLine(
+              DEFAULT_ACCOUNTS.accruedExpenses || "2600",
+              loanDeductions,
+              `Loan Deductions Payable — ${employeeName}`,
+            ),
+          );
+        }
+
+        if (otherDeductions > 0) {
+          lines1.push(
+            JournalService.createCreditLine(
+              DEFAULT_ACCOUNTS.accruedExpenses || "2600",
+              otherDeductions,
+              `Other Deductions Payable — ${employeeName}`,
             ),
           );
         }
@@ -1108,6 +1348,40 @@ exports.backfillPayrollJournals = async (req, res, next) => {
             description: `RSSB employee deduction — ${employeeName} [backfill]`,
             debit: 0,
             credit: rssbEmployee,
+          });
+        }
+
+        const healthInsurance = payroll.deductions?.healthInsurance || 0;
+        const loanDeductions = payroll.deductions?.loanDeductions || 0;
+        const otherDeductions = payroll.deductions?.otherDeductions || 0;
+
+        if (healthInsurance > 0) {
+          lines1.push({
+            accountCode: DEFAULT_ACCOUNTS.accruedExpenses || "2600",
+            accountName: "Accrued Payroll",
+            description: `Health Insurance Payable — ${employeeName} [backfill]`,
+            debit: 0,
+            credit: healthInsurance,
+          });
+        }
+
+        if (loanDeductions > 0) {
+          lines1.push({
+            accountCode: DEFAULT_ACCOUNTS.accruedExpenses || "2600",
+            accountName: "Accrued Payroll",
+            description: `Loan Deductions Payable — ${employeeName} [backfill]`,
+            debit: 0,
+            credit: loanDeductions,
+          });
+        }
+
+        if (otherDeductions > 0) {
+          lines1.push({
+            accountCode: DEFAULT_ACCOUNTS.accruedExpenses || "2600",
+            accountName: "Accrued Payroll",
+            description: `Other Deductions Payable — ${employeeName} [backfill]`,
+            debit: 0,
+            credit: otherDeductions,
           });
         }
 

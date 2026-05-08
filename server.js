@@ -71,6 +71,8 @@ async function initializeServer() {
   require('./models/ChartOfAccount');
   require('./models/PrecomputedAggregation');
   require('./models/Expense');
+  require('./models/Employee');
+  require('./models/SalaryHistory');
   require('./models/Payroll');
   require('./models/PayrollRun');
   require('./models/PurchaseReturn');
@@ -248,6 +250,7 @@ async function initializeServer() {
   apiRouter.use('/taxes', require('./routes/taxRoutes'));
   apiRouter.use('/payroll', require('./routes/payrollRoutes'));
   apiRouter.use('/payroll-runs', require('./routes/payrollRunRoutes'));
+  apiRouter.use('/employees', require('./routes/employeeRoutes'));
   apiRouter.use('/expenses', require('./routes/expenseRoutes'));
   apiRouter.use('/petty-cash', require('./routes/pettyCashRoutes'));
   apiRouter.use('/bank-accounts', require('./routes/bankAccountRoutes'));

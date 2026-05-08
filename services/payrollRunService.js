@@ -25,16 +25,20 @@ class PayrollRunService {
       (acc, p) => {
         acc.gross += p.salary?.grossSalary || 0;
         acc.tax += p.deductions?.paye || 0;
-        acc.rssbEmployee +=
-          (p.deductions?.rssbEmployeePension || 0) +
+        acc.rssbEmployeePension +=
+          (p.deductions?.rssbEmployeePension || 0);
+        acc.rssbEmployeeMaternity +=
           (p.deductions?.rssbEmployeeMaternity || 0);
-        acc.rssbEmployer +=
-          (p.contributions?.rssbEmployerPension || 0) +
+        acc.rssbEmployerPension +=
+          (p.contributions?.rssbEmployerPension || 0);
+        acc.rssbEmployerMaternity +=
           (p.contributions?.rssbEmployerMaternity || 0);
+        acc.occupationalHazard +=
+          (p.contributions?.occupationalHazard || 0);
         acc.net += p.netPay || 0;
         return acc;
       },
-      { gross: 0, tax: 0, rssbEmployee: 0, rssbEmployer: 0, net: 0 },
+      { gross: 0, tax: 0, rssbEmployeePension: 0, rssbEmployeeMaternity: 0, rssbEmployerPension: 0, rssbEmployerMaternity: 0, occupationalHazard: 0, net: 0 },
     );
 
     const salaryAccount = await ChartOfAccount.findById(data.salary_account_id);
@@ -69,9 +73,9 @@ class PayrollRunService {
 
     if (totals.rssbEmployee > 0 || totals.rssbEmployer > 0) {
       lines.push({
-        accountCode: "2210",
+        accountCode: "2240",
         accountName: "RSSB Payable",
-        description: "RSSB deductions",
+        description: "RSSB employee & employer contributions",
         debit: 0,
         credit: totals.rssbEmployee + totals.rssbEmployer,
       });
@@ -177,31 +181,58 @@ class PayrollRunService {
     payrollRecords.forEach((p) => {
       totalGross += p.salary?.grossSalary || 0;
       totalTax += p.deductions?.paye || 0;
-      totalRssbEmployee +=
-        (p.deductions?.rssbEmployeePension || 0) +
-        (p.deductions?.rssbEmployeeMaternity || 0);
-      totalRssbEmployer +=
-        (p.contributions?.rssbEmployerPension || 0) +
-        (p.contributions?.rssbEmployerMaternity || 0);
+      const rssbEmployeePension = p.deductions?.rssbEmployeePension || 0;
+      const rssbEmployeeMaternity = p.deductions?.rssbEmployeeMaternity || 0;
+      const rssbEmployerPension = p.contributions?.rssbEmployerPension || 0;
+      const rssbEmployerMaternity = p.contributions?.rssbEmployerMaternity || 0;
+      const occupationalHazard = p.contributions?.occupationalHazard || 0;
+      const occupationalHazardRate = p.contributions?.occupationalHazardRate || 2.0;
+      totalRssbEmployee += rssbEmployeePension + rssbEmployeeMaternity;
+      totalRssbEmployer += rssbEmployerPension + rssbEmployerMaternity + occupationalHazard;
       totalNet += p.netPay || 0;
 
       lines.push({
         employee_name: `${p.employee?.firstName} ${p.employee?.lastName}`,
         employee_id: p.employee?.employeeId || "N/A",
+        employee_ref_id: p.employee_id || null,
+        // Income components
+        basic_salary: p.salary?.basicSalary || 0,
+        transport_allowance: p.salary?.transportAllowance || 0,
+        housing_allowance: p.salary?.housingAllowance || 0,
+        other_allowances: p.salary?.otherAllowances || 0,
+        overtime: p.additionalIncome?.overtime || 0,
+        bonuses: p.additionalIncome?.bonuses || 0,
+        commissions: p.additionalIncome?.commissions || 0,
+        benefits_in_kind: p.additionalIncome?.benefitsInKind || 0,
         gross_salary: p.salary?.grossSalary || 0,
+        // PAYE
         tax_deduction: p.deductions?.paye || 0,
-        other_deductions:
-          (p.deductions?.rssbEmployeePension || 0) +
-          (p.deductions?.rssbEmployeeMaternity || 0),
-        rssb_employer:
-          (p.contributions?.rssbEmployerPension || 0) +
-          (p.contributions?.rssbEmployerMaternity || 0),
+        // RSSB Employee deductions
+        rssb_employee_pension: rssbEmployeePension,
+        rssb_employee_maternity: rssbEmployeeMaternity,
+        rssb_employee_total: rssbEmployeePension + rssbEmployeeMaternity,
+        // RSSB Employer contributions
+        rssb_employer_pension: rssbEmployerPension,
+        rssb_employer_maternity: rssbEmployerMaternity,
+        occupational_hazard: occupationalHazard,
+        occupational_hazard_rate: occupationalHazardRate,
+        rssb_employer_total: rssbEmployerPension + rssbEmployerMaternity + occupationalHazard,
+        // Other deductions
+        health_insurance: p.deductions?.healthInsurance || 0,
+        loan_deductions: p.deductions?.loanDeductions || 0,
+        other_deductions: p.deductions?.otherDeductions || 0,
+        total_deductions: p.deductions?.totalDeductions || 0,
         net_pay: p.netPay || 0,
         payroll_id: p._id,
       });
     });
 
-    const expectedNet = totalGross - totalTax - totalRssbEmployee;
+    // Include all deductions in net calculation
+    const totalHealthInsurance = payrollRecords.reduce((s, p) => s + (p.deductions?.healthInsurance || 0), 0);
+    const totalLoanDeductions = payrollRecords.reduce((s, p) => s + (p.deductions?.loanDeductions || 0), 0);
+    const totalOtherDeductions = payrollRecords.reduce((s, p) => s + (p.deductions?.otherDeductions || 0), 0);
+    const totalEmployeeDeductions = totalTax + totalRssbEmployee + totalHealthInsurance + totalLoanDeductions + totalOtherDeductions;
+    const expectedNet = totalGross - totalEmployeeDeductions;
     if (Math.abs(expectedNet - totalNet) > 0.01) {
       throw new Error("PAYROLL_TOTALS_MISMATCH");
     }
@@ -416,9 +447,9 @@ class PayrollRunService {
     try {
       const entryNumber = await nextSequence(companyId, "JE");
 
-      // Calculate employer contributions from employee records
+      // Calculate total RSSB employer contributions from all employee lines
       const employerContributions = payrollRun.lines.reduce((sum, l) => {
-        return sum + (l.rssb_employer || 0);
+        return sum + (l.rssb_employer_total || 0);
       }, 0);
 
       // ── Determine whether the individual payroll records were already accrued ───
@@ -708,6 +739,116 @@ class PayrollRunService {
     } catch (err) {
       throw err;
     }
+  }
+
+  // ── REMIT PAYE ──────────────────────────────────────────────────────────
+  static async remitPaye(companyId, runId, data, userId) {
+    const payrollRun = await PayrollRun.findOne({
+      _id: runId,
+      company: companyId,
+    });
+
+    if (!payrollRun) {
+      const error = new Error("NOT_FOUND");
+      error.statusCode = 404;
+      throw error;
+    }
+
+    if (payrollRun.status !== "posted") {
+      throw new Error("PAYROLL_NOT_POSTED");
+    }
+
+    if (payrollRun.remittance?.paye?.remitted) {
+      throw new Error("PAYE_ALREADY_REMITTED");
+    }
+
+    payrollRun.remittance = {
+      ...payrollRun.remittance,
+      paye: {
+        remitted: true,
+        remitted_date: data.remitted_date ? new Date(data.remitted_date) : new Date(),
+        reference_no: data.reference_no || null,
+        amount: data.amount || payrollRun.total_tax,
+      }
+    };
+    await payrollRun.save();
+
+    return payrollRun;
+  }
+
+  // ── REMIT RSSB ──────────────────────────────────────────────────────────
+  static async remitRssb(companyId, runId, data, userId) {
+    const payrollRun = await PayrollRun.findOne({
+      _id: runId,
+      company: companyId,
+    });
+
+    if (!payrollRun) {
+      const error = new Error("NOT_FOUND");
+      error.statusCode = 404;
+      throw error;
+    }
+
+    if (payrollRun.status !== "posted") {
+      throw new Error("PAYROLL_NOT_POSTED");
+    }
+
+    if (payrollRun.remittance?.rssb?.remitted) {
+      throw new Error("RSSB_ALREADY_REMITTED");
+    }
+
+    // Calculate total RSSB payable = employee deductions + employer contributions
+    const totalRssb = (payrollRun.total_other_deductions || 0) +
+      payrollRun.lines.reduce((sum, l) => sum + (l.rssb_employer_total || 0), 0);
+
+    payrollRun.remittance = {
+      ...payrollRun.remittance,
+      rssb: {
+        remitted: true,
+        remitted_date: data.remitted_date ? new Date(data.remitted_date) : new Date(),
+        reference_no: data.reference_no || null,
+        amount: data.amount || totalRssb,
+      }
+    };
+    await payrollRun.save();
+
+    return payrollRun;
+  }
+
+  // ── GENERATE BANK TRANSFER DATA ─────────────────────────────────────────
+  static async generateBankTransferData(companyId, runId) {
+    const payrollRun = await PayrollRun.findOne({
+      _id: runId,
+      company: companyId,
+    });
+
+    if (!payrollRun) {
+      const error = new Error("NOT_FOUND");
+      error.statusCode = 404;
+      throw error;
+    }
+
+    const bankAccount = await BankAccount.findById(payrollRun.bank_account_id);
+
+    const records = payrollRun.lines.map((l) => ({
+      employee_name: l.employee_name,
+      employee_id: l.employee_id,
+      bank_name: l.bank_name || "",
+      bank_account: l.bank_account || "",
+      net_pay: l.net_pay,
+      currency: "RWF",
+    }));
+
+    return {
+      reference_no: payrollRun.reference_no,
+      payment_date: payrollRun.payment_date,
+      period_start: payrollRun.pay_period_start,
+      period_end: payrollRun.pay_period_end,
+      total_net: payrollRun.total_net,
+      bank_name: bankAccount?.bankName || "",
+      bank_account: bankAccount?.accountNumber || "",
+      records,
+    };
   }
 }
 
