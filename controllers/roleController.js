@@ -12,16 +12,49 @@
 const Role = require('../models/Role');
 const { parsePagination, paginationMeta } = require('../utils/pagination');
 
+const normalizePermissions = (permissions = []) => {
+  if (!Array.isArray(permissions)) return [];
+
+  const grouped = new Map();
+
+  for (const permission of permissions) {
+    if (!permission) continue;
+
+    if (typeof permission === 'string') {
+      const [resource, action] = permission.split(':').map(part => part && part.trim()).filter(Boolean);
+      if (!resource || !action) continue;
+      if (!grouped.has(resource)) grouped.set(resource, new Set());
+      grouped.get(resource).add(action);
+      continue;
+    }
+
+    if (typeof permission === 'object' && permission.resource) {
+      const resource = String(permission.resource).trim();
+      const actions = Array.isArray(permission.actions) ? permission.actions : [];
+      if (!resource || actions.length === 0) continue;
+      if (!grouped.has(resource)) grouped.set(resource, new Set());
+      for (const action of actions) {
+        if (action) grouped.get(resource).add(String(action).trim());
+      }
+    }
+  }
+
+  return Array.from(grouped.entries()).map(([resource, actions]) => ({
+    resource,
+    actions: Array.from(actions).filter(Boolean)
+  })).filter(permission => permission.actions.length > 0);
+};
+
 /**
  * List all roles (system roles + company custom roles)
  * GET /api/roles
  */
 exports.getRoles = async (req, res, next) => {
   try {
-    const { company_id } = req.query;
-    
+    const company_id = req.query.company_id || req.company?._id || req.user?.company?._id || null;
+
     let query = {};
-    
+
     if (company_id) {
       // Get system roles (company_id is null) + company's custom roles
       query = {
@@ -121,6 +154,7 @@ exports.getRolePermissions = async (req, res, next) => {
 exports.createRole = async (req, res, next) => {
   try {
     const { name, description, permissions, company_id } = req.body;
+    const effectiveCompanyId = company_id || req.company?._id || req.user?.company?._id || null;
 
     // Validate required fields
     if (!name) {
@@ -135,7 +169,7 @@ exports.createRole = async (req, res, next) => {
     const existingRole = await Role.findOne({
       name: name.trim(),
       $or: [
-        { company_id: company_id || null },
+        { company_id: effectiveCompanyId },
         { company_id: null } // Can't create role with same name as system role
       ]
     });
@@ -152,8 +186,8 @@ exports.createRole = async (req, res, next) => {
     const role = await Role.create({
       name: name.trim(),
       description: description || null,
-      permissions: permissions || [],
-      company_id: company_id || null,
+      permissions: normalizePermissions(permissions),
+      company_id: effectiveCompanyId,
       is_system_role: false
     });
 
@@ -212,7 +246,7 @@ exports.updateRole = async (req, res, next) => {
     // Update fields
     if (name) role.name = name.trim();
     if (description !== undefined) role.description = description;
-    if (permissions) role.permissions = permissions;
+    if (permissions) role.permissions = normalizePermissions(permissions);
 
     await role.save();
 

@@ -544,6 +544,13 @@ exports.getPosProducts = async (req, res, next) => {
   try {
     const companyId = req.user.company._id;
     const { search, warehouseId, category, limit = 50 } = req.query;
+    const toNumber = (value) => {
+      if (value == null) return 0;
+      if (typeof value === 'number') return value;
+      if (typeof value === 'object' && value.$numberDecimal) return Number(value.$numberDecimal) || 0;
+      if (typeof value.toString === 'function') return Number(value.toString()) || 0;
+      return Number(value) || 0;
+    };
 
     let query = { company: companyId, isActive: { $ne: false } };
     
@@ -554,31 +561,37 @@ exports.getPosProducts = async (req, res, next) => {
         { barcode: { $regex: search, $options: 'i' } }
       ];
     }
+    if (mongoose.Types.ObjectId.isValid(search)) {
+      query.$or.push({ _id: search });
+    }
     
     if (category) {
       query.category = category;
     }
 
     const products = await Product.find(query)
-      .select('name sku sellingPrice unit taxRate taxCode currentStock averageCost barcode category')
+      .select('name sku sellingPrice unit taxRate taxCode currentStock averageCost barcode category isStockable')
       .limit(Number(limit))
       .sort({ name: 1 });
 
     // Enhance with availability info
-    const enhancedProducts = products.map(p => ({
-      _id: p._id,
-      name: p.name,
-      sku: p.sku,
-      barcode: p.barcode,
-      sellingPrice: p.sellingPrice || 0,
-      unit: p.unit,
-      taxRate: p.taxRate || 0,
-      taxCode: p.taxCode || 'A',
-      currentStock: p.currentStock || 0,
-      averageCost: p.averageCost || 0,
-      category: p.category,
-      isAvailable: (p.currentStock || 0) > 0 || p.isStockable === false
-    }));
+    const enhancedProducts = products.map(p => {
+      const currentStock = toNumber(p.currentStock);
+      return {
+        _id: p._id,
+        name: p.name,
+        sku: p.sku,
+        barcode: p.barcode,
+        sellingPrice: toNumber(p.sellingPrice),
+        unit: p.unit,
+        taxRate: toNumber(p.taxRate),
+        taxCode: p.taxCode || 'A',
+        currentStock,
+        averageCost: toNumber(p.averageCost),
+        category: p.category,
+        isAvailable: currentStock > 0 || p.isStockable === false
+      };
+    });
 
     res.json({
       success: true,

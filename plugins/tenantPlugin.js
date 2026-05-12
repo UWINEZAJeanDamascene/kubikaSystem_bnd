@@ -6,7 +6,7 @@ const tenantContext = require('../lib/tenantContext');
 // `{ skipTenant: true }` or explicitly providing `{ company: ... }` in the filter.
 module.exports = function tenantPlugin(schema) {
   // Helper to get current companyId from async context
-  function getCompanyId() {
+  function getCompanyId() { 
     try {
       const store = tenantContext.getStore();
       return store && store.companyId ? store.companyId : null;

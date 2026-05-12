@@ -247,6 +247,7 @@ exports.getReconciliationData = async (req, res, next) => {
           amount: roundMoney(amount),
           isDebit: debit > 0,
           reconciled: isMatchedInCurrent,
+          matchIds: matches.map(m => m._id),
           matchedStatementLineIds: matches.map(m => m.bankStatementLine),
           sourceType: entry.sourceType,
           isLocked: entry.isLocked || false,
@@ -294,6 +295,7 @@ exports.getReconciliationData = async (req, res, next) => {
         reconciled: isFullyMatched,
         status: line.status,
         matchedAmount: roundMoney(totalMatched),
+        matchIds: matches.map(m => m._id),
       });
     }
 

@@ -44,7 +44,8 @@ exports.getProducts = async (req, res, next) => {
       query.$or = [
         { name: { $regex: search, $options: 'i' } },
         { sku: { $regex: search, $options: 'i' } },
-        { description: { $regex: search, $options: 'i' } }
+        { description: { $regex: search, $options: 'i' } },
+        { barcode: { $regex: search, $options: 'i' } }
       ];
     }
 
@@ -706,10 +707,20 @@ exports.getProductBarcode = async (req, res, next) => {
       bcid = 'itf14';
     }
 
+    // Build a scan-friendly payload URL for QR use and for context
+    const frontendBase = process.env.FRONTEND_BASE_URL || req.get('origin') || '';
+    const code = product.barcode || product.sku || String(product._id);
+    const query = new URLSearchParams({
+      code,
+      sku: product.sku || '',
+      barcode: product.barcode || ''
+    });
+    const payloadUrl = frontendBase ? `${frontendBase.replace(/\/$/, '')}/products/${product._id}?${query.toString()}` : `product:${product._id}`;
+
     // Fallback text/value
     const text = product.barcode || product.sku || String(product._id);
 
-    // For EAN13/EAN8/UPC ensure numeric; if not, use CODE128 as fallback
+    // Validate and normalize numeric barcode types
     let codeText = String(text);
     if (['ean13', 'ean8', 'upca'].includes(bcid)) {
       codeText = codeText.replace(/[^0-9]/g, '');
@@ -722,9 +733,34 @@ exports.getProductBarcode = async (req, res, next) => {
       }
     }
 
+    // Strict length/character validations per barcode type
+    if (bcid === 'ean13' && codeText.length !== 13) {
+      return res.status(400).json({ success: false, message: 'EAN-13 barcode must be exactly 13 digits' });
+    }
+    if (bcid === 'upca' && codeText.length !== 12) {
+      return res.status(400).json({ success: false, message: 'UPC-A barcode must be exactly 12 digits' });
+    }
+    if (bcid === 'ean8' && codeText.length !== 8) {
+      return res.status(400).json({ success: false, message: 'EAN-8 barcode must be exactly 8 digits' });
+    }
+    if (bcid === 'itf14' && !/^\d{14}$/.test(codeText)) {
+      return res.status(400).json({ success: false, message: 'ITF-14 barcode must be exactly 14 digits' });
+    }
+    if (bcid === 'code39') {
+      codeText = codeText.toUpperCase();
+      if (!/^[0-9A-Z .$/+%-]+$/.test(codeText)) {
+        return res.status(400).json({ success: false, message: 'CODE39 barcode contains unsupported characters' });
+      }
+    }
+
+    // If requested type is NONE, indicate there's nothing printable
+    if (requestedType === 'NONE') {
+      return res.status(400).json({ success: false, message: 'This product has no printable barcode type configured' });
+    }
+
     const png = await bwipjs.toBuffer({
       bcid,
-      text: bcid === 'ean13' ? codeText : String(text),
+      text: ['ean13', 'ean8', 'upca', 'itf14', 'code39'].includes(bcid) ? codeText : String(text),
       scale: parseInt(req.query.scale || '3', 10),
       height: parseInt(req.query.height || '10', 10),
       includetext: true,
@@ -732,7 +768,7 @@ exports.getProductBarcode = async (req, res, next) => {
     });
 
     res.set('Content-Type', 'image/png');
-    res.send(png);
+    return res.send(png);
   } catch (error) {
     next(error);
   }
@@ -753,7 +789,13 @@ exports.getProductQRCode = async (req, res, next) => {
 
     // Build a default URL for product lookup. Prefer FRONTEND_BASE_URL env, else origin.
     const frontendBase = process.env.FRONTEND_BASE_URL || req.get('origin') || '';
-    const payloadUrl = frontendBase ? `${frontendBase.replace(/\/$/, '')}/products/${product._id}` : `product:${product._id}`;
+    const code = product.barcode || product.sku || String(product._id);
+    const query = new URLSearchParams({
+      code,
+      sku: product.sku || '',
+      barcode: product.barcode || ''
+    });
+    const payloadUrl = frontendBase ? `${frontendBase.replace(/\/$/, '')}/products/${product._id}?${query.toString()}` : `product:${product._id}`;
 
     const pngBuffer = await QRCode.toBuffer(payloadUrl, {
       type: 'png',
