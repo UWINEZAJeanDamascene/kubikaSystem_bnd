@@ -13,7 +13,8 @@ const {
   getLowStockProducts,
   checkLowStockAndNotify
 } = require('../controllers/productController');
-const { protect, authorize } = require('../middleware/auth');
+const { protect } = require('../middleware/auth');
+const { requirePermission } = require('../middleware/rbacMiddleware');
 const logAction = require('../middleware/logAction');
 const { cacheMiddleware, sessionMiddleware } = require('../middleware/cacheMiddleware');
 
@@ -22,26 +23,26 @@ router.use(protect);
 router.use(sessionMiddleware);
 
 router.route('/')
-  .get(cacheMiddleware({ type: 'product', ttl: 120 }), getProducts)
-  .post(authorize('admin'), logAction('product'), createProduct);
+  .get(requirePermission('products', 'read'), cacheMiddleware({ type: 'product', ttl: 120 }), getProducts)
+  .post(requirePermission('products', 'create'), logAction('product'), createProduct);
 
-router.get('/low-stock', getLowStockProducts);
+router.get('/low-stock', requirePermission('products', 'read'), getLowStockProducts);
 
 // Check low stock and send notifications
-router.post('/check-low-stock', authorize('admin'), checkLowStockAndNotify);
+router.post('/check-low-stock', requirePermission('products', 'read'), checkLowStockAndNotify);
 
 router.route('/:id')
-  .get(cacheMiddleware({ type: 'product', ttl: 120, keyGenerator: (req) => cacheMiddlewareKey(req) }), getProduct)
-  .put(authorize('admin'), logAction('product'), updateProduct)
-  .delete(authorize('admin'), logAction('product'), deleteProduct);
+  .get(requirePermission('products', 'read'), cacheMiddleware({ type: 'product', ttl: 120, keyGenerator: (req) => cacheMiddlewareKey(req) }), getProduct)
+  .put(requirePermission('products', 'update'), logAction('product'), updateProduct)
+  .delete(requirePermission('products', 'delete'), logAction('product'), deleteProduct);
 
-router.put('/:id/archive', authorize('admin'), logAction('product'), archiveProduct);
-router.put('/:id/restore', authorize('admin'), logAction('product'), restoreProduct);
-router.get('/:id/history', getProductHistory);
-router.get('/:id/lifecycle', getProductLifecycle);
+router.put('/:id/archive', requirePermission('products', 'delete'), logAction('product'), archiveProduct);
+router.put('/:id/restore', requirePermission('products', 'update'), logAction('product'), restoreProduct);
+router.get('/:id/history', requirePermission('products', 'read'), getProductHistory);
+router.get('/:id/lifecycle', requirePermission('products', 'read'), getProductLifecycle);
 // Barcode and QR code endpoints
-router.get('/:id/barcode', require('../controllers/productController').getProductBarcode);
-router.get('/:id/qrcode', require('../controllers/productController').getProductQRCode);
+router.get('/:id/barcode', requirePermission('products', 'read'), require('../controllers/productController').getProductBarcode);
+router.get('/:id/qrcode', requirePermission('products', 'read'), require('../controllers/productController').getProductQRCode);
 
 module.exports = router;
 

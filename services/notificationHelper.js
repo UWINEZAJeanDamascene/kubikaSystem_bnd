@@ -9,6 +9,7 @@ const NOTIFICATION_TYPES = {
   OUT_OF_STOCK: 'out_of_stock',
   LOW_STOCK: 'low_stock',
   STOCK_RECEIVED: 'stock_received',
+  AUTO_PO_CREATED: 'auto_po_created',
   
   // Invoice Alerts
   INVOICE_CREATED: 'invoice_created',
@@ -142,6 +143,49 @@ const notifyStockReceived = async (companyId, product, quantity, supplier) => {
     link: `/products/${product._id}`,
     metadata: { productId: product._id, quantity }
   });
+};
+
+const notifyAutoPurchaseOrderCreated = async (companyId, product, purchaseOrder, currentStock) => {
+  const managers = await User.find({
+    company: companyId,
+    role: { $in: ['manager', 'admin'] },
+    isActive: true
+  }).select('_id');
+
+  if (!managers.length) {
+    return createNotification({
+      companyId,
+      type: NOTIFICATION_TYPES.AUTO_PO_CREATED,
+      title: 'Auto Purchase Order Draft Created',
+      message: `${product.name} (${product.sku || 'N/A'}) reached ${currentStock} in stock. Draft PO ${purchaseOrder.referenceNo || purchaseOrder._id} was created for review.`,
+      severity: SEVERITY.WARNING,
+      link: `/purchase-orders/${purchaseOrder._id}`,
+      metadata: {
+        productId: product._id,
+        purchaseOrderId: purchaseOrder._id,
+        referenceNo: purchaseOrder.referenceNo,
+        currentStock
+      }
+    });
+  }
+
+  const notifications = await Promise.all(managers.map((manager) => createNotification({
+    companyId,
+    userId: manager._id,
+    type: NOTIFICATION_TYPES.AUTO_PO_CREATED,
+    title: 'Auto Purchase Order Draft Created',
+    message: `${product.name} (${product.sku || 'N/A'}) reached ${currentStock} in stock. Draft PO ${purchaseOrder.referenceNo || purchaseOrder._id} was created for review.`,
+    severity: SEVERITY.WARNING,
+    link: `/purchase-orders/${purchaseOrder._id}`,
+    metadata: {
+      productId: product._id,
+      purchaseOrderId: purchaseOrder._id,
+      referenceNo: purchaseOrder.referenceNo,
+      currentStock
+    }
+  })));
+
+  return notifications.flat();
 };
 
 /**
@@ -374,6 +418,7 @@ module.exports = {
   notifyLowStock,
   notifyOutOfStock,
   notifyStockReceived,
+  notifyAutoPurchaseOrderCreated,
   // Invoice
   notifyInvoiceCreated,
   notifyPaymentReceived,

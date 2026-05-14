@@ -4,7 +4,114 @@ const Role = require('../models/Role');
 const User = require('../models/User');
 const AuditLogService = require('./AuditLogService');
 const ChartOfAccount = require('../models/ChartOfAccount');
+const SubscriptionPlanService = require('./SubscriptionPlanService');
 const { CHART_OF_ACCOUNTS } = require('../constants/chartOfAccounts');
+
+let PLAN_FEATURES = {
+  trial: ['inventory', 'sales', 'purchases', 'reports'],
+  starter: ['inventory', 'sales', 'purchases', 'reports'],
+  professional: ['inventory', 'sales', 'purchases', 'finance', 'reports', 'projects', 'fixed_assets'],
+  enterprise: ['inventory', 'sales', 'purchases', 'finance', 'payroll', 'reports', 'projects', 'fixed_assets', 'ai_assistant', 'integrations']
+};
+
+let PLAN_MODULES = {
+  trial: ['Dashboards', 'Products and categories', 'Warehouses', 'Stock levels and movements', 'Suppliers', 'Purchase orders', 'GRN', 'Clients', 'Quotations', 'Invoices', 'POS'],
+  starter: ['Dashboards', 'Products and categories', 'Warehouses', 'Stock levels and movements', 'Suppliers', 'Purchase orders', 'GRN', 'Clients', 'Quotations', 'Invoices', 'POS'],
+  professional: ['Everything in Core', 'Sales orders', 'Pick and pack', 'Delivery notes', 'Credit notes', 'Recurring invoices', 'AR and AP', 'Bank accounts', 'Petty cash', 'Expenses', 'Reports hub', 'Batches', 'Serial numbers'],
+  enterprise: ['Everything in Business', 'Chart of accounts', 'Journal entries', 'Fixed assets', 'Liabilities', 'Budgets', 'Projects', 'Employees', 'Payroll runs', 'Financial reports', 'Security, roles and audit trail', 'Backups and bulk data', 'Batches', 'Serial numbers']
+};
+
+const FEATURE_KEYS = [
+  'inventory',
+  'sales',
+  'purchases',
+  'finance',
+  'payroll',
+  'reports',
+  'projects',
+  'fixed_assets',
+  'ai_assistant',
+  'integrations'
+];
+
+async function loadPlanFeatures() {
+  try {
+    await SubscriptionPlanService.seedDefaultPlans();
+    const plans = await SubscriptionPlanService.getAllPlans(true);
+    const dynamic = {};
+    const dynamicModules = {};
+    for (const p of plans) {
+      dynamic[p.key] = p.features || [];
+      dynamicModules[p.key] = p.modules || [];
+    }
+    if (Object.keys(dynamic).length > 0) {
+      PLAN_FEATURES = dynamic;
+      PLAN_MODULES = dynamicModules;
+    }
+  } catch (e) {
+    console.error('Failed to load subscription plans, using defaults:', e);
+  }
+}
+
+function buildFeatureAccess(plan, overrides = {}) {
+  const included = new Set(PLAN_FEATURES[plan] || PLAN_FEATURES.trial || []);
+  return FEATURE_KEYS.reduce((acc, key) => {
+    acc[key] = Object.prototype.hasOwnProperty.call(overrides, key)
+      ? Boolean(overrides[key])
+      : included.has(key);
+    return acc;
+  }, {});
+}
+
+function escapeHtml(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function serializeCompany(row) {
+  const featureAccess = buildFeatureAccess(row.subscription_plan || 'trial', row.feature_access || {});
+  const enabledModules = FEATURE_KEYS.filter((key) => featureAccess[key]);
+  const subscriptionModules = PLAN_MODULES[row.subscription_plan || 'trial'] || PLAN_MODULES.trial || [];
+  return {
+    _id: row._id,
+    name: row.name,
+    code: row.code,
+    legal_name: row.legal_name || null,
+    email: row.email,
+    phone: row.phone || '',
+    website: row.website || '',
+    registration_number: row.registration_number || '',
+    tax_identification_number: row.tax_identification_number || '',
+    industry: row.industry || '',
+    logo_url: row.logo_url || '',
+    address: row.address || {},
+    base_currency: row.base_currency || 'RWF',
+    tin: row.tax_identification_number || row.registration_number || '',
+    approvalStatus: row.approvalStatus,
+    status: row.approvalStatus,
+    isActive: row.isActive,
+    subscription_plan: row.subscription_plan || 'trial',
+    subscription_status: row.subscription_status || 'trialing',
+    billing_cycle: row.billing_cycle || 'monthly',
+    billing_amount: row.billing_amount || 0,
+    next_billing_date: row.next_billing_date || null,
+    feature_access: featureAccess,
+    enabledModuleCount: enabledModules.length,
+    enabledModules,
+    subscription_modules: subscriptionModules,
+    platform_notes: row.platform_notes || '',
+    trial_ends_at: row.trial_ends_at || null,
+    last_payment_reminder_at: row.last_payment_reminder_at || null,
+    last_platform_message_at: row.last_platform_message_at || null,
+    registration_rejection_reason: row.registration_rejection_reason || null,
+    setup_completed: Boolean(row.setup_completed),
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt
+  };
+}
 
 class CompanyService {
 
@@ -93,6 +200,7 @@ class CompanyService {
       throw err;
     }
 
+    const selectedPlan = (c.subscription_plan || 'trial').toString().trim();
     const company = await Company.create({
       name: c.name.trim(),
       email: emailCompany,
@@ -100,6 +208,10 @@ class CompanyService {
       tax_identification_number: c.tin || null,
       approvalStatus: 'pending',
       isActive: false,
+      subscription_plan: selectedPlan,
+      subscription_status: 'trialing',
+      feature_access: buildFeatureAccess(selectedPlan),
+      trial_ends_at: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
       registration_rejection_reason: null
     });
 
@@ -151,16 +263,191 @@ class CompanyService {
     const list = await Company.find({ approvalStatus: status })
       .sort({ createdAt: -1 })
       .lean();
-    return list.map((row) => ({
-      _id: row._id,
-      name: row.name,
-      email: row.email,
-      phone: row.phone || '',
-      tin: row.tax_identification_number || '',
-      createdAt: row.createdAt,
-      updatedAt: row.updatedAt,
-      registration_rejection_reason: row.registration_rejection_reason || null
-    }));
+    return list.map(serializeCompany);
+  }
+
+  static async getPlatformDashboard() {
+    const now = new Date();
+    const soon = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
+
+    const [companies, usersByCompany] = await Promise.all([
+      Company.find({}).sort({ createdAt: -1 }).lean(),
+      User.aggregate([
+        { $match: { company: { $ne: null } } },
+        { $group: { _id: '$company', users: { $sum: 1 }, activeUsers: { $sum: { $cond: ['$isActive', 1, 0] } } } }
+      ])
+    ]);
+
+    const userMap = new Map(usersByCompany.map((row) => [String(row._id), row]));
+    const normalized = companies.map((company) => {
+      const usage = userMap.get(String(company._id)) || { users: 0, activeUsers: 0 };
+      return {
+        ...serializeCompany(company),
+        users: usage.users,
+        activeUsers: usage.activeUsers
+      };
+    });
+
+    const stats = normalized.reduce((acc, company) => {
+      acc.total += 1;
+      acc[company.approvalStatus] = (acc[company.approvalStatus] || 0) + 1;
+      if (company.subscription_status === 'past_due') acc.pastDue += 1;
+      if (company.next_billing_date) {
+        const billingDate = new Date(company.next_billing_date);
+        if (billingDate >= now && billingDate <= soon) acc.upcomingPayments += 1;
+      }
+      acc.monthlyRecurringRevenue += company.billing_cycle === 'annual'
+        ? company.billing_amount / 12
+        : company.billing_cycle === 'quarterly'
+          ? company.billing_amount / 3
+          : company.billing_amount;
+      return acc;
+    }, {
+      total: 0,
+      pending: 0,
+      approved: 0,
+      rejected: 0,
+      pastDue: 0,
+      upcomingPayments: 0,
+      monthlyRecurringRevenue: 0
+    });
+
+    const plansFromDb = await SubscriptionPlanService.getAllPlans(true);
+    const planMetaMap = new Map(plansFromDb.map((p) => [p.key, { name: p.name, modules: p.modules || [] }]));
+
+    return {
+      stats,
+      companies: normalized,
+      packageMatrix: Object.entries(PLAN_FEATURES).map(([plan, features]) => ({
+        plan,
+        name: planMetaMap.get(plan)?.name || plan,
+        modules: planMetaMap.get(plan)?.modules || [],
+        features
+      }))
+    };
+  }
+
+  static async updatePlatformAccess(companyId, payload, reviewerUserId) {
+    const company = await Company.findById(companyId);
+    if (!company) throw new Error('COMPANY_NOT_FOUND');
+
+    const plan = payload.subscription_plan || company.subscription_plan || 'trial';
+    const hasNextBillingDate = Object.prototype.hasOwnProperty.call(payload, 'next_billing_date');
+    const billingAmount = payload.billing_amount === undefined ? company.billing_amount : Number(payload.billing_amount);
+    const update = {
+      subscription_plan: plan,
+      subscription_status: payload.subscription_status || company.subscription_status,
+      billing_cycle: payload.billing_cycle || company.billing_cycle,
+      billing_amount: Number.isFinite(billingAmount) && billingAmount >= 0 ? billingAmount : company.billing_amount,
+      next_billing_date: hasNextBillingDate ? payload.next_billing_date : company.next_billing_date,
+      feature_access: buildFeatureAccess(plan, payload.feature_access || company.feature_access || {}),
+      platform_notes: payload.platform_notes === undefined ? company.platform_notes : payload.platform_notes
+    };
+
+    if (['suspended', 'cancelled'].includes(update.subscription_status)) {
+      update.isActive = false;
+    } else if (['trialing', 'active'].includes(update.subscription_status) && company.approvalStatus === 'approved') {
+      update.isActive = true;
+    }
+
+    Object.assign(company, update);
+    await company.save();
+
+    await AuditLogService.log({
+      companyId: company._id,
+      userId: reviewerUserId,
+      action: 'company.platform_access_update',
+      entityType: 'company',
+      entityId: company._id,
+      changes: update
+    });
+
+    return serializeCompany(company.toObject());
+  }
+
+  static async sendPaymentReminder(companyId, payload, reviewerUserId) {
+    const company = await Company.findById(companyId);
+    if (!company) throw new Error('COMPANY_NOT_FOUND');
+
+    const subject = payload.subject || `Payment reminder for ${company.name}`;
+    const message = payload.message || 'Your subscription payment is coming due. Please arrange payment to keep your platform access active.';
+    const emailService = require('./emailService');
+    const sent = await emailService.sendEmail(
+      company.email,
+      subject,
+      `<div style="font-family:Arial,sans-serif;max-width:620px;margin:0 auto;padding:24px;">
+        <h2 style="color:#0f172a;">${escapeHtml(subject)}</h2>
+        <p>${escapeHtml(message)}</p>
+        <p><strong>Company:</strong> ${escapeHtml(company.name)}</p>
+        ${company.next_billing_date ? `<p><strong>Next payment:</strong> ${new Date(company.next_billing_date).toLocaleDateString()}</p>` : ''}
+      </div>`
+    );
+
+    company.last_payment_reminder_at = new Date();
+    await company.save();
+
+    await AuditLogService.log({
+      companyId: company._id,
+      userId: reviewerUserId,
+      action: 'company.payment_reminder_sent',
+      entityType: 'company',
+      entityId: company._id,
+      changes: { subject, sent }
+    });
+
+    return { sent, company: serializeCompany(company.toObject()) };
+  }
+
+  static async broadcastPlatformUpdate(payload, reviewerUserId) {
+    const filter = payload.companyIds?.length ? { _id: { $in: payload.companyIds } } : { approvalStatus: 'approved', isActive: true };
+    const companies = await Company.find(filter).select('name email last_platform_message_at').lean();
+    const recipients = companies.map((company) => company.email).filter(Boolean);
+    if (!recipients.length) return { sent: false, recipients: 0, failed: 0 };
+
+    const subject = payload.subject || 'Important platform update';
+    const message = payload.message || 'We have an update to share about your StockManager platform.';
+    const emailService = require('./emailService');
+
+    const html = `<div style="font-family:Arial,sans-serif;max-width:620px;margin:0 auto;padding:24px;">
+      <h2 style="color:#0f172a;">${escapeHtml(subject)}</h2>
+      <p>${escapeHtml(message)}</p>
+    </div>`;
+
+    // Send individually to protect recipient privacy
+    let sentCount = 0;
+    let failedCount = 0;
+    const errors = [];
+
+    for (const company of companies) {
+      if (!company.email) continue;
+      try {
+        await emailService.sendEmail(company.email, subject, html);
+        sentCount += 1;
+      } catch (err) {
+        failedCount += 1;
+        errors.push({ company: company.name, email: company.email, error: err.message });
+        console.error(`[Broadcast] Failed to send to ${company.email}:`, err.message);
+      }
+    }
+
+    // Update last_platform_message_at only for successfully notified companies
+    const notifiedIds = companies
+      .filter((c) => c.email && !errors.some((e) => e.email === c.email))
+      .map((c) => c._id);
+    if (notifiedIds.length) {
+      await Company.updateMany({ _id: { $in: notifiedIds } }, { $set: { last_platform_message_at: new Date() } });
+    }
+
+    await AuditLogService.log({
+      companyId: null,
+      userId: reviewerUserId,
+      action: 'company.platform_broadcast_sent',
+      entityType: 'company',
+      entityId: 'broadcast',
+      changes: { subject, message, recipients: recipients.length, sent: sentCount, failed: failedCount }
+    });
+
+    return { sent: sentCount, failed: failedCount, recipients: recipients.length };
   }
 
   static async approveCompanyById(companyId, reviewerUserId) {
@@ -172,6 +459,7 @@ class CompanyService {
     company.approvalStatus = 'approved';
     company.isActive = true;
     company.registration_rejection_reason = null;
+    company.feature_access = buildFeatureAccess(company.subscription_plan || 'trial');
     await company.save();
 
     await AuditLogService.log({
@@ -180,7 +468,7 @@ class CompanyService {
       action: 'company.registration_approved',
       entityType: 'company',
       entityId: company._id,
-      changes: { approvalStatus: 'approved' }
+      changes: { approvalStatus: 'approved', feature_access: company.feature_access }
     });
 
     // Send approval email
@@ -255,6 +543,12 @@ class CompanyService {
     const company = await Company.findById(companyId);
     if (!company) throw new Error('COMPANY_NOT_FOUND');
     return company;
+  }
+
+  static async getProfileById(companyId) {
+    const company = await Company.findById(companyId).lean();
+    if (!company) throw new Error('COMPANY_NOT_FOUND');
+    return serializeCompany(company);
   }
 
   /**
@@ -417,6 +711,113 @@ class CompanyService {
   }
 
   /**
+   * Platform-wide analytics: MRR, growth, churn, and tenant trends
+   */
+  static async getPlatformAnalytics() {
+    const now = new Date();
+    const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1);
+
+    // Aggregate companies
+    const companies = await Company.find({ approvalStatus: 'approved' }).lean();
+
+    // MRR calculation — normalize to monthly
+    const monthlyAmount = (amount, cycle) => {
+      if (!amount || amount < 0) return 0;
+      if (cycle === 'annual') return amount / 12;
+      if (cycle === 'quarterly') return amount / 3;
+      return amount;
+    };
+
+    const mrr = companies
+      .filter((c) => c.subscription_status === 'active' || c.subscription_status === 'trialing')
+      .reduce((sum, c) => sum + monthlyAmount(c.billing_amount, c.billing_cycle), 0);
+
+    const mrrByPlan = {};
+    companies.forEach((c) => {
+      const plan = c.subscription_plan || 'trial';
+      if (!mrrByPlan[plan]) mrrByPlan[plan] = 0;
+      if (c.subscription_status === 'active' || c.subscription_status === 'trialing') {
+        mrrByPlan[plan] += monthlyAmount(c.billing_amount, c.billing_cycle);
+      }
+    });
+
+    // Plan distribution
+    const planDistribution = {};
+    companies.forEach((c) => {
+      const plan = c.subscription_plan || 'trial';
+      planDistribution[plan] = (planDistribution[plan] || 0) + 1;
+    });
+
+    // Status distribution
+    const statusDistribution = {};
+    companies.forEach((c) => {
+      const status = c.subscription_status || 'trialing';
+      statusDistribution[status] = (statusDistribution[status] || 0) + 1;
+    });
+
+    // Growth trend: new companies per month (last 6 months)
+    const allCompanies = await Company.find({ createdAt: { $gte: sixMonthsAgo } }).sort({ createdAt: 1 }).lean();
+    const growthTrend = {};
+    for (let i = 0; i < 6; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      growthTrend[key] = 0;
+    }
+    allCompanies.forEach((c) => {
+      const d = new Date(c.createdAt);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      if (growthTrend.hasOwnProperty(key)) {
+        growthTrend[key] = (growthTrend[key] || 0) + 1;
+      }
+    });
+
+    // Churn trend: companies that moved to suspended/cancelled in last 6 months (from audit logs)
+    const churnLogs = await mongoose.model('AuditLog').find({
+      action: { $in: ['company.update', 'company.platform_access_updated'] },
+      createdAt: { $gte: sixMonthsAgo },
+      'changes.subscription_status': { $in: ['suspended', 'cancelled'] }
+    }).sort({ createdAt: 1 }).lean();
+
+    const churnTrend = {};
+    for (let i = 0; i < 6; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      churnTrend[key] = 0;
+    }
+    churnLogs.forEach((log) => {
+      const d = new Date(log.createdAt);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      if (churnTrend.hasOwnProperty(key)) {
+        churnTrend[key] = (churnTrend[key] || 0) + 1;
+      }
+    });
+
+    // Active tenant count over time (cumulative approved up to each month)
+    const activeTenantTrend = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i + 1, 1);
+      const count = await Company.countDocuments({
+        approvalStatus: 'approved',
+        createdAt: { $lt: d }
+      });
+      const key = `${d.getFullYear()}-${String(d.getMonth()).padStart(2, '0')}`;
+      activeTenantTrend.push({ month: key, count });
+    }
+
+    return {
+      mrr: Math.round(mrr * 100) / 100,
+      mrrByPlan,
+      totalTenants: companies.length,
+      activeTenants: companies.filter((c) => c.isActive && c.subscription_status !== 'cancelled').length,
+      planDistribution,
+      statusDistribution,
+      growthTrend: Object.entries(growthTrend).sort().map(([month, count]) => ({ month, count })),
+      churnTrend: Object.entries(churnTrend).sort().map(([month, count]) => ({ month, count })),
+      activeTenantTrend
+    };
+  }
+
+  /**
    * Check if company has any transactions
    * @private
    */
@@ -450,4 +851,10 @@ class CompanyService {
   }
 }
 
+// Load plans from database on startup
+(async () => {
+  await loadPlanFeatures();
+})();
+
+CompanyService.loadPlanFeatures = loadPlanFeatures;
 module.exports = CompanyService;

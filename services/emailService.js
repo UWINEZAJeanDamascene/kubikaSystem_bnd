@@ -15,7 +15,7 @@ const RETRY_BASE_MS = 1000; // exponential: 1s → 2s → 4s
 const getSender = () =>
   `${emailConfig.fromName} <${emailConfig.fromAddress || emailConfig.gmailUser}>`;
 
-const FRONTEND_URL = config.server.frontendUrl;
+const FRONTEND_URL = config.server.frontendUrl.replace(/\/$/, '');
 
 // ============================================
 // HELPERS
@@ -340,7 +340,7 @@ const sendWelcomeEmail = async ({ to, name, companyName }) => {
 // ============================================
 
 const sendPasswordResetEmail = async ({ to, name, resetToken }) => {
-  const resetUrl = `${FRONTEND_URL}/reset-password/${resetToken}`;
+  const resetUrl = `${FRONTEND_URL}/reset-password?token=${encodeURIComponent(resetToken)}`;
   const subject = 'Reset Your StockManager Password';
 
   const html = `

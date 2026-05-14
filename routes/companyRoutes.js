@@ -12,6 +12,13 @@ const registerValidation = [
   body('company').isObject().withMessage('company object required'),
   body('company.name').trim().notEmpty().withMessage('Company name required'),
   body('company.email').isEmail().normalizeEmail().withMessage('Valid company email required'),
+  body('company.tin').optional({ nullable: true, checkFalsy: true }).trim().isString(),
+  body('company.phone').optional({ nullable: true, checkFalsy: true }).trim().isString(),
+  body('company.subscription_plan')
+    .optional({ nullable: true, checkFalsy: true })
+    .trim()
+    .isIn(['trial', 'starter', 'professional', 'enterprise'])
+    .withMessage('Invalid subscription plan'),
   body('admin').isObject().withMessage('admin object required'),
   body('admin.name').trim().notEmpty().withMessage('Admin name required'),
   body('admin.email').isEmail().normalizeEmail().withMessage('Valid admin email required'),
@@ -31,6 +38,8 @@ router.post(
   companyController.registerPublic
 );
 
+router.get('/subscription-plans/public', companyController.getSubscriptionPlans);
+
 router.use(protect);
 
 /**
@@ -44,6 +53,14 @@ router.put('/me', companyController.updateMyCompany);
  */
 router.get('/pending', authorize('platform_admin'), companyController.getPendingCompanies);
 router.get('/rejected', authorize('platform_admin'), companyController.getRejectedCompanies);
+router.get('/platform-dashboard', authorize('platform_admin'), companyController.getPlatformDashboard);
+router.get('/platform-analytics', authorize('platform_admin'), companyController.getPlatformAnalytics);
+router.post('/platform-broadcast', authorize('platform_admin'), companyController.broadcastPlatformUpdate);
+router.get('/platform-audit-logs', authorize('platform_admin'), companyController.getPlatformAuditLogs);
+router.get('/subscription-plans', authorize('platform_admin'), companyController.getSubscriptionPlans);
+router.post('/subscription-plans', authorize('platform_admin'), companyController.createSubscriptionPlan);
+router.put('/subscription-plans/:key', authorize('platform_admin'), companyController.updateSubscriptionPlan);
+router.delete('/subscription-plans/:key', authorize('platform_admin'), companyController.deleteSubscriptionPlan);
 
 router.post('/', companyController.createCompany);
 router.get('/', companyController.getAllCompanies);
@@ -72,6 +89,11 @@ router.put(
   stripUnvalidatedBody,
   companyController.rejectCompany
 );
+router.put('/:id/platform-access', authorize('platform_admin'), companyController.updatePlatformAccess);
+router.post('/:id/payment-reminder', authorize('platform_admin'), companyController.sendPaymentReminder);
+router.get('/:id/users', authorize('platform_admin'), companyController.getCompanyUsers);
+router.post('/:id/users/:userId/impersonate', authorize('platform_admin'), companyController.impersonateUser);
+router.post('/:id/users/:userId/force-password-reset', authorize('platform_admin'), companyController.forcePasswordReset);
 
 router.post('/:id/logo', uploadFor('companies').single('logo'), companyController.uploadLogo);
 router.get('/:id/setup-status', companyController.getSetupStatus);

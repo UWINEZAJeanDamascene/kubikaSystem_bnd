@@ -15,6 +15,7 @@ const SessionService = require('./sessionService');
 const TokenService = require('./tokenService');
 const { notifyUserCreated, notifyPasswordChanged, notifyAccountLocked } = require('./notificationHelper');
 const ActionLog = require('../models/ActionLog');
+const emailService = require('./emailService');
 
 // Import centralized configuration
 const env = require('../src/config/environment');
@@ -421,31 +422,32 @@ class UserService {
     await user.save();
     console.log('[PasswordReset] Token saved for user:', user.email);
 
-    // Send password reset email
-    let emailSent = false;
-    try {
-      const config = require('../src/config/environment').getConfig();
-      console.log('[PasswordReset] Config check:', { emailNotif: config.features?.emailNotifications, gmailUser: !!config.email?.gmailUser });
-      
-      if (config.features?.emailNotifications && config.email?.gmailUser) {
-        const emailService = require('./emailService');
-        await emailService.sendPasswordResetEmail({
-          to: user.email,
-          name: user.name,
-          resetToken
-        });
-        emailSent = true;
-        console.log('[PasswordReset] Email sent successfully to:', user.email);
-      } else {
-        console.log('[PasswordReset] Email NOT sent - config check failed');
-      }
-    } catch (emailErr) {
-      console.error('[PasswordReset] Failed to send password reset email:', emailErr.message);
+    const emailEnabled = config.features?.emailNotifications !== false;
+    if (!emailEnabled) {
+      console.warn('[PasswordReset] Email NOT sent - email notifications are disabled');
+      const error = new Error('EMAIL_NOT_CONFIGURED');
+      error.code = 'EMAIL_NOT_CONFIGURED';
+      throw error;
     }
+
+    const emailSent = await emailService.sendPasswordResetEmail({
+      to: user.email,
+      name: user.name,
+      resetToken
+    });
+
+    if (!emailSent) {
+      console.error('[PasswordReset] Email service returned false for:', user.email);
+      const error = new Error('EMAIL_DELIVERY_FAILED');
+      error.code = 'EMAIL_DELIVERY_FAILED';
+      throw error;
+    }
+
+    console.log('[PasswordReset] Email sent successfully to:', user.email);
 
     return {
       success: true,
-      message: emailSent ? 'Password reset link sent to your email' : 'Password reset link sent (email delivery may be delayed)'
+      message: 'Password reset link sent to your email'
     };
   }
 

@@ -134,6 +134,16 @@ stockMovementSchema.pre('save', function(next) {
   next()
 })
 
+stockMovementSchema.post('save', function(doc) {
+  setImmediate(() => {
+    try {
+      require('../services/autoPurchaseOrderService').handleStockMovementSaved(doc);
+    } catch (error) {
+      console.error('[AutoPO] Failed to schedule reorder check:', error.message);
+    }
+  });
+});
+
 // Convert Decimal128 results to JS numbers for compatibility with tests and lean queries
 const decimalTransform = require('./plugins/decimalTransformPlugin');
 stockMovementSchema.plugin(decimalTransform);

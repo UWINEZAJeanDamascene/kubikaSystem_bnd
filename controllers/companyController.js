@@ -1,4 +1,9 @@
 const CompanyService = require('../services/CompanyService');
+const AuditLogService = require('../services/AuditLogService');
+const UserService = require('../services/UserService');
+const User = require('../models/User');
+const TokenService = require('../services/tokenService');
+const SubscriptionPlanService = require('../services/SubscriptionPlanService');
 
 /**
  * Company Controller
@@ -339,6 +344,123 @@ exports.getRejectedCompanies = async (req, res) => {
   }
 };
 
+/** GET /api/companies/platform-dashboard — platform_admin */
+exports.getPlatformDashboard = async (req, res) => {
+  try {
+    const data = await CompanyService.getPlatformDashboard();
+    res.json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message || 'Failed to load platform dashboard' });
+  }
+};
+
+/** GET /api/companies/platform-analytics — platform_admin */
+exports.getPlatformAnalytics = async (req, res) => {
+  try {
+    const data = await CompanyService.getPlatformAnalytics();
+    res.json({ success: true, data });
+  } catch (error) {
+    console.error('getPlatformAnalytics error:', error);
+    res.status(500).json({ success: false, message: error.message || 'Failed to load analytics' });
+  }
+};
+
+/** PUT /api/companies/:id/platform-access — platform_admin */
+exports.updatePlatformAccess = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const company = await CompanyService.updatePlatformAccess(id, req.body, req.user._id);
+    res.json({ success: true, message: 'Platform access updated', data: company });
+  } catch (error) {
+    if (error.message === 'COMPANY_NOT_FOUND') {
+      return res.status(404).json({ success: false, message: 'Company not found' });
+    }
+    res.status(500).json({ success: false, message: error.message || 'Failed to update platform access' });
+  }
+};
+
+/** POST /api/companies/:id/payment-reminder — platform_admin */
+exports.sendPaymentReminder = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await CompanyService.sendPaymentReminder(id, req.body || {}, req.user._id);
+    res.json({ success: true, message: 'Payment reminder processed', data: result });
+  } catch (error) {
+    if (error.message === 'COMPANY_NOT_FOUND') {
+      return res.status(404).json({ success: false, message: 'Company not found' });
+    }
+    res.status(500).json({ success: false, message: error.message || 'Failed to send payment reminder' });
+  }
+};
+
+/** POST /api/companies/platform-broadcast — platform_admin */
+exports.broadcastPlatformUpdate = async (req, res) => {
+  try {
+    const result = await CompanyService.broadcastPlatformUpdate(req.body || {}, req.user._id);
+    res.json({ success: true, message: 'Platform update processed', data: result });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message || 'Failed to send platform update' });
+  }
+};
+
+/** GET /api/companies/platform-audit-logs — platform_admin */
+exports.getPlatformAuditLogs = async (req, res) => {
+  try {
+    const { action, entity_type, entity_id, date_from, date_to, status, company_id, page = 1, per_page = 50 } = req.query;
+
+    const filters = {
+      action,
+      entityType: entity_type,
+      entityId: entity_id,
+      dateFrom: date_from,
+      dateTo: date_to,
+      status,
+      companyId: company_id
+    };
+
+    const options = {
+      page: parseInt(page) || 1,
+      perPage: parseInt(per_page) || 50
+    };
+
+    const result = await AuditLogService.queryPlatformLogs(filters, options);
+
+    res.json({
+      success: true,
+      data: result.data,
+      pagination: result.pagination
+    });
+  } catch (error) {
+    console.error('getPlatformAuditLogs error:', error);
+    res.status(500).json({ success: false, message: error.message || 'Failed to load audit logs' });
+  }
+};
+
+/** GET /api/companies/:id/users — platform_admin */
+exports.getCompanyUsers = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { page = 1, limit = 50, role, isActive, search } = req.query;
+
+    const result = await UserService.getUsers(id, {
+      page: parseInt(page) || 1,
+      limit: parseInt(limit) || 50,
+      role,
+      isActive,
+      search
+    });
+
+    res.json({
+      success: true,
+      data: result.data,
+      pagination: result.pagination
+    });
+  } catch (error) {
+    console.error('getCompanyUsers error:', error);
+    res.status(500).json({ success: false, message: error.message || 'Failed to load company users' });
+  }
+};
+
 /** PUT /api/companies/:id/approve — platform_admin */
 exports.approveCompany = async (req, res) => {
   try {
@@ -397,7 +519,7 @@ exports.getMyCompany = async (req, res) => {
       });
     }
 
-    const company = await CompanyService.getById(companyId);
+    const company = await CompanyService.getProfileById(companyId);
 
     // Get system settings
     const SystemSettingsService = require('../services/systemSettingsService');
@@ -419,5 +541,181 @@ exports.getMyCompany = async (req, res) => {
       success: false,
       error: errorMessage
     });
+  }
+};
+
+/** POST /api/companies/:id/users/:userId/impersonate — platform_admin */
+exports.impersonateUser = async (req, res) => {
+  try {
+    const { id, userId } = req.params;
+
+    const user = await User.findById(userId).populate('company', 'name email');
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    // Verify user belongs to the specified company
+    if (user.company?._id?.toString() !== id) {
+      return res.status(400).json({ success: false, message: 'User does not belong to this company' });
+    }
+
+    const memberships = [{
+      companyId: user.company?._id?.toString() || null,
+      role: user.role
+    }];
+
+    const { access_token, refresh_token } = await TokenService.generateTokenPair(user._id.toString(), memberships);
+
+    await AuditLogService.log({
+      companyId: user.company?._id || null,
+      userId: req.user._id,
+      action: 'user.impersonated',
+      entityType: 'user',
+      entityId: user._id,
+      changes: { impersonatedUserEmail: user.email }
+    });
+
+    res.json({
+      success: true,
+      data: {
+        access_token,
+        refresh_token,
+        user: {
+          _id: user._id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          company: user.company
+        }
+      }
+    });
+  } catch (error) {
+    console.error('impersonateUser error:', error);
+    res.status(500).json({ success: false, message: error.message || 'Impersonation failed' });
+  }
+};
+
+/** POST /api/companies/:id/users/:userId/force-password-reset — platform_admin */
+exports.forcePasswordReset = async (req, res) => {
+  try {
+    const { id, userId } = req.params;
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    if (user.company?.toString() !== id) {
+      return res.status(400).json({ success: false, message: 'User does not belong to this company' });
+    }
+
+    // Generate temporary password
+    const charset = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*';
+    let tempPassword = '';
+    for (let i = 0; i < 10; i++) {
+      tempPassword += charset.charAt(Math.floor(Math.random() * charset.length));
+    }
+
+    user.password = tempPassword;
+    user.mustChangePassword = true;
+    user.tempPassword = true;
+    await user.save();
+
+    await AuditLogService.log({
+      companyId: user.company || null,
+      userId: req.user._id,
+      action: 'user.force_password_reset',
+      entityType: 'user',
+      entityId: user._id,
+      changes: { targetEmail: user.email }
+    });
+
+    res.json({
+      success: true,
+      message: 'Password reset successfully',
+      data: {
+        tempPassword,
+        user: { _id: user._id, name: user.name, email: user.email }
+      }
+    });
+  } catch (error) {
+    console.error('forcePasswordReset error:', error);
+    res.status(500).json({ success: false, message: error.message || 'Password reset failed' });
+  }
+};
+
+/** GET /api/companies/subscription-plans — platform_admin */
+exports.getSubscriptionPlans = async (req, res) => {
+  try {
+    const activeOnly = req.query.active === 'true';
+    const plans = await SubscriptionPlanService.getAllPlans(activeOnly);
+    res.json({ success: true, data: plans });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message || 'Failed to load plans' });
+  }
+};
+
+/** POST /api/companies/subscription-plans — platform_admin */
+exports.createSubscriptionPlan = async (req, res) => {
+  try {
+    const plan = await SubscriptionPlanService.createPlan(req.body);
+    await AuditLogService.log({
+      companyId: null,
+      userId: req.user._id,
+      action: 'subscription_plan.created',
+      entityType: 'subscription_plan',
+      entityId: plan._id,
+      changes: { key: plan.key, name: plan.name }
+    });
+    res.status(201).json({ success: true, data: plan });
+  } catch (error) {
+    if (error.code === 'PLAN_KEY_EXISTS') {
+      return res.status(409).json({ success: false, message: 'Plan key already exists' });
+    }
+    res.status(500).json({ success: false, message: error.message || 'Failed to create plan' });
+  }
+};
+
+/** PUT /api/companies/subscription-plans/:key — platform_admin */
+exports.updateSubscriptionPlan = async (req, res) => {
+  try {
+    const { key } = req.params;
+    const plan = await SubscriptionPlanService.updatePlan(key, req.body);
+    await AuditLogService.log({
+      companyId: null,
+      userId: req.user._id,
+      action: 'subscription_plan.updated',
+      entityType: 'subscription_plan',
+      entityId: plan._id,
+      changes: req.body
+    });
+    res.json({ success: true, data: plan });
+  } catch (error) {
+    if (error.code === 'PLAN_NOT_FOUND') {
+      return res.status(404).json({ success: false, message: 'Plan not found' });
+    }
+    res.status(500).json({ success: false, message: error.message || 'Failed to update plan' });
+  }
+};
+
+/** DELETE /api/companies/subscription-plans/:key — platform_admin */
+exports.deleteSubscriptionPlan = async (req, res) => {
+  try {
+    const { key } = req.params;
+    await SubscriptionPlanService.deletePlan(key);
+    await AuditLogService.log({
+      companyId: null,
+      userId: req.user._id,
+      action: 'subscription_plan.deleted',
+      entityType: 'subscription_plan',
+      entityId: key,
+      changes: { key }
+    });
+    res.json({ success: true, message: 'Plan deleted' });
+  } catch (error) {
+    if (error.code === 'PLAN_NOT_FOUND') {
+      return res.status(404).json({ success: false, message: 'Plan not found' });
+    }
+    res.status(500).json({ success: false, message: error.message || 'Failed to delete plan' });
   }
 };

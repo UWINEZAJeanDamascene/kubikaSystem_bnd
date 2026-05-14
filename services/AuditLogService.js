@@ -217,6 +217,62 @@ class AuditLogService {
       .populate('user_id', 'first_name last_name email')
       .lean();
   }
+
+  /**
+   * Query platform-wide audit logs (for platform admin)
+   * @param {object} filters - Filter options
+   * @param {object} options - Pagination options
+   */
+  static async queryPlatformLogs(filters = {}, options = {}) {
+    const {
+      action,
+      entityType,
+      entityId,
+      dateFrom,
+      dateTo,
+      status,
+      companyId
+    } = filters;
+
+    const match = {};
+
+    if (action) match.action = action;
+    if (entityType) match.entity_type = entityType;
+    if (entityId) match.entity_id = entityId;
+    if (status) match.status = status;
+    if (companyId) match.company_id = companyId;
+
+    if (dateFrom || dateTo) {
+      match.createdAt = {};
+      if (dateFrom) match.createdAt.$gte = new Date(dateFrom);
+      if (dateTo) match.createdAt.$lte = new Date(dateTo);
+    }
+
+    const page = options.page || 1;
+    const perPage = options.perPage || 50;
+    const skip = (page - 1) * perPage;
+
+    const [logs, total] = await Promise.all([
+      AuditLog.find(match)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(perPage)
+        .populate('user_id', 'name email')
+        .populate('company_id', 'name code')
+        .lean(),
+      AuditLog.countDocuments(match)
+    ]);
+
+    return {
+      data: logs,
+      pagination: {
+        page,
+        per_page: perPage,
+        total,
+        total_pages: Math.ceil(total / perPage)
+      }
+    };
+  }
 }
 
 module.exports = AuditLogService;

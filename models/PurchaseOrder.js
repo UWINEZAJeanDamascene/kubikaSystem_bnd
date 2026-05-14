@@ -32,6 +32,8 @@ const purchaseOrderSchema = new mongoose.Schema({
   orderDate: { type: Date, default: Date.now },
   expectedDeliveryDate: Date,
   status: { type: String, enum: ['draft', 'approved', 'partially_received', 'fully_received', 'cancelled'], default: 'draft' },
+  source: { type: String, enum: ['MANUAL', 'AUTO'], default: 'MANUAL' },
+  autoReorderProduct: { type: mongoose.Schema.Types.ObjectId, ref: 'Product' },
   currencyCode: { type: String, default: 'FRW' },
   exchangeRate: { type: Number, default: 1 },
   subtotal: { type: Number, default: 0 },
@@ -51,6 +53,10 @@ const purchaseOrderSchema = new mongoose.Schema({
 purchaseOrderSchema.index({ company: 1, referenceNo: 1 }, { unique: true });
 purchaseOrderSchema.index({ company: 1, status: 1 });
 purchaseOrderSchema.index({ company: 1, status: 1, orderDate: 1 });
+purchaseOrderSchema.index(
+  { company: 1, source: 1, status: 1, autoReorderProduct: 1 },
+  { partialFilterExpression: { source: 'AUTO', status: 'draft' } }
+);
 
 // Auto-generate reference number
 purchaseOrderSchema.pre('save', async function(next) {

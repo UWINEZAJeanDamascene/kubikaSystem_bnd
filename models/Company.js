@@ -144,6 +144,42 @@ const companySchema = new mongoose.Schema({
     enum:    ['trial', 'starter', 'professional', 'enterprise'],
     default: 'trial'
   },
+  subscription_status: {
+    type: String,
+    enum: ['trialing', 'active', 'past_due', 'suspended', 'cancelled'],
+    default: 'trialing'
+  },
+  billing_cycle: {
+    type: String,
+    enum: ['monthly', 'quarterly', 'annual'],
+    default: 'monthly'
+  },
+  billing_amount: {
+    type: Number,
+    default: 0,
+    min: 0
+  },
+  next_billing_date: {
+    type: Date,
+    default: null
+  },
+  feature_access: {
+    type: mongoose.Schema.Types.Mixed,
+    default: {}
+  },
+  platform_notes: {
+    type: String,
+    trim: true,
+    default: ''
+  },
+  last_payment_reminder_at: {
+    type: Date,
+    default: null
+  },
+  last_platform_message_at: {
+    type: Date,
+    default: null
+  },
   trial_ends_at: {
     type:    Date,
     default: null

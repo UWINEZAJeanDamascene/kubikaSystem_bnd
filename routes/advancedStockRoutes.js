@@ -95,6 +95,7 @@ const {
 } = require('../controllers/purchaseReturnController');
 
 const { protect, authorize } = require('../middleware/auth');
+const { requirePermission } = require('../middleware/rbacMiddleware');
 const logAction = require('../middleware/logAction');
 
 router.use(protect);
@@ -191,39 +192,39 @@ router.post('/reorder-points/trigger-auto-check', authorize('admin', 'stock_mana
 
 // ========== PURCHASE ORDER ROUTES ==========
 router.route('/purchase-orders')
-  .get(authorize('admin', 'stock_manager'), getPurchaseOrders)
-  .post(authorize('admin', 'stock_manager'), logAction('stock'), createPurchaseOrder);
+  .get(requirePermission('purchase_orders', 'read'), getPurchaseOrders)
+  .post(requirePermission('purchase_orders', 'create'), logAction('stock'), createPurchaseOrder);
 
 router.route('/purchase-orders/:id')
-  .get(authorize('admin', 'stock_manager'), getPurchaseOrder)
-  .put(authorize('admin', 'stock_manager'), logAction('stock'), updatePurchaseOrder);
+  .get(requirePermission('purchase_orders', 'read'), getPurchaseOrder)
+  .put(requirePermission('purchase_orders', 'update'), logAction('stock'), updatePurchaseOrder);
 
-router.post('/purchase-orders/:id/approve', authorize('admin', 'stock_manager'), logAction('stock'), approvePurchaseOrder);
-router.post('/purchase-orders/:id/cancel', authorize('admin', 'stock_manager'), logAction('stock'), cancelPurchaseOrder);
-router.post('/purchase-orders/:id/payment', authorize('admin', 'stock_manager'), logAction('stock'), recordPOPayment);
+router.post('/purchase-orders/:id/approve', requirePermission('purchase_orders', 'approve'), logAction('stock'), approvePurchaseOrder);
+router.post('/purchase-orders/:id/cancel', requirePermission('purchase_orders', 'delete'), logAction('stock'), cancelPurchaseOrder);
+router.post('/purchase-orders/:id/payment', requirePermission('ap_payments', 'create'), logAction('stock'), recordPOPayment);
 
 // ========== GRN ROUTES ==========
-router.get('/grn', authorize('admin', 'stock_manager'), listGRNs);
-router.post('/grn', authorize('admin', 'stock_manager'), logAction('stock'), createGRN);
-router.get('/grn/:id', authorize('admin', 'stock_manager'), getGRN);
-router.put('/grn/:id', authorize('admin', 'stock_manager'), logAction('stock'), updateGRN);
-router.delete('/grn/:id', authorize('admin', 'stock_manager'), logAction('stock'), deleteGRN);
-router.post('/grn/:id/confirm', authorize('admin', 'stock_manager'), logAction('stock'), confirmGRN);
+router.get('/grn', requirePermission('grn', 'read'), listGRNs);
+router.post('/grn', requirePermission('grn', 'create'), logAction('stock'), createGRN);
+router.get('/grn/:id', requirePermission('grn', 'read'), getGRN);
+router.put('/grn/:id', requirePermission('grn', 'update'), logAction('stock'), updateGRN);
+router.delete('/grn/:id', requirePermission('grn', 'delete'), logAction('stock'), deleteGRN);
+router.post('/grn/:id/confirm', requirePermission('grn', 'confirm'), logAction('stock'), confirmGRN);
 
 // ========== PURCHASE RETURNS ==========
 router.route('/purchase-returns')
-  .get(authorize('admin', 'stock_manager'), listPurchaseReturns)
-  .post(authorize('admin', 'stock_manager'), logAction('stock'), createPurchaseReturn);
+  .get(requirePermission('purchase_returns', 'read'), listPurchaseReturns)
+  .post(requirePermission('purchase_returns', 'create'), logAction('stock'), createPurchaseReturn);
 
 router.route('/purchase-returns/:id')
-  .get(authorize('admin', 'stock_manager'), getPurchaseReturn)
-  .put(authorize('admin', 'stock_manager'), logAction('stock'), updatePurchaseReturn);
+  .get(requirePermission('purchase_returns', 'read'), getPurchaseReturn)
+  .put(requirePermission('purchase_returns', 'update'), logAction('stock'), updatePurchaseReturn);
 
 router.route('/purchase-returns/:id/confirm')
-  .post(authorize('admin', 'stock_manager'), logAction('stock'), confirmPurchaseReturn)
-  .put(authorize('admin', 'stock_manager'), logAction('stock'), confirmPurchaseReturn);
+  .post(requirePermission('purchase_returns', 'confirm'), logAction('stock'), confirmPurchaseReturn)
+  .put(requirePermission('purchase_returns', 'confirm'), logAction('stock'), confirmPurchaseReturn);
 
 router.route('/purchase-returns/:id/refund')
-  .post(authorize('admin', 'stock_manager'), logAction('stock'), processRefund);
+  .post(requirePermission('purchase_returns', 'update'), logAction('stock'), processRefund);
 
 module.exports = router;

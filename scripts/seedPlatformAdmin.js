@@ -11,6 +11,7 @@ const mongoose = require('mongoose');
 const connectDB = require('../config/database');
 const User = require('../models/User');
 
+
 async function run() {
   await connectDB();
 

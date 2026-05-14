@@ -26,6 +26,7 @@ const chartOfAccountSchema = new mongoose.Schema({
   allow_direct_posting: { type: Boolean, default: true },
   isActive: { type: Boolean, default: true },
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+  customFields: { type: mongoose.Schema.Types.Mixed, default: {} },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now }
 });

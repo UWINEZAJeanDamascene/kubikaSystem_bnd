@@ -298,6 +298,20 @@ exports.forgotPassword = async (req, res, next) => {
       message: result.message
     });
   } catch (error) {
+    if (error.code === 'EMAIL_NOT_CONFIGURED') {
+      return res.status(503).json({
+        success: false,
+        message: 'Password reset email is not configured. Please contact support.',
+        code: 'EMAIL_NOT_CONFIGURED'
+      });
+    }
+    if (error.code === 'EMAIL_DELIVERY_FAILED') {
+      return res.status(502).json({
+        success: false,
+        message: 'Could not send the password reset email. Please try again later.',
+        code: 'EMAIL_DELIVERY_FAILED'
+      });
+    }
     next(error);
   }
 };

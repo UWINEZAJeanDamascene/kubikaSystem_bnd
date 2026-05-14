@@ -9,22 +9,23 @@ const {
   getSupplierPurchaseHistory,
   toggleSupplierStatus
 } = require('../controllers/supplierController');
-const { protect, authorize } = require('../middleware/auth');
+const { protect } = require('../middleware/auth');
+const { requirePermission } = require('../middleware/rbacMiddleware');
 const logAction = require('../middleware/logAction');
 
 router.use(protect);
 
 router.route('/')
-  .get(getSuppliers)
-  .post(authorize('admin'), logAction('supplier'), createSupplier);
+  .get(requirePermission('suppliers', 'read'), getSuppliers)
+  .post(requirePermission('suppliers', 'create'), logAction('supplier'), createSupplier);
 
 router.route('/:id')
-  .get(getSupplier)
-  .put(authorize('admin'), logAction('supplier'), updateSupplier)
-  .delete(authorize('admin'), logAction('supplier'), deleteSupplier);
+  .get(requirePermission('suppliers', 'read'), getSupplier)
+  .put(requirePermission('suppliers', 'update'), logAction('supplier'), updateSupplier)
+  .delete(requirePermission('suppliers', 'delete'), logAction('supplier'), deleteSupplier);
 
-router.get('/:id/purchase-history', getSupplierPurchaseHistory);
+router.get('/:id/purchase-history', requirePermission('suppliers', 'read'), getSupplierPurchaseHistory);
 
-router.put('/:id/toggle-status', authorize('admin'), logAction('supplier'), toggleSupplierStatus);
+router.put('/:id/toggle-status', requirePermission('suppliers', 'update'), logAction('supplier'), toggleSupplierStatus);
 
 module.exports = router;
