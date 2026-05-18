@@ -429,6 +429,115 @@ exports.forceLogoutUser = async (req, res, next) => {
 };
 
 /**
+ * Check if platform admin setup is needed
+ * GET /api/auth/platform-admin-status
+ * Public - returns whether a platform admin exists
+ */
+exports.checkPlatformAdminStatus = async (req, res, next) => {
+  try {
+    const existingAdmin = await User.findOne({ role: 'platform_admin' });
+    res.json({
+      success: true,
+      needsSetup: !existingAdmin
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Setup the first platform admin
+ * POST /api/auth/setup-platform-admin
+ * Public - requires PLATFORM_ADMIN_SETUP_KEY env var
+ * Can only be used once when no platform admin exists
+ */
+exports.setupPlatformAdmin = async (req, res, next) => {
+  try {
+    const { setupKey, email, password, name } = req.body;
+
+    // Verify setup key is configured and matches
+    const expectedKey = process.env.PLATFORM_ADMIN_SETUP_KEY;
+    if (!expectedKey) {
+      return res.status(503).json({
+        success: false,
+        message: 'Platform admin setup is not configured on this server.',
+        code: 'SETUP_NOT_CONFIGURED'
+      });
+    }
+
+    if (!setupKey || setupKey !== expectedKey) {
+      return res.status(403).json({
+        success: false,
+        message: 'Invalid setup key.',
+        code: 'INVALID_SETUP_KEY'
+      });
+    }
+
+    // Validate required fields
+    if (!email || !password || !name) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide name, email, and password'
+      });
+    }
+
+    if (password.length < 8) {
+      return res.status(400).json({
+        success: false,
+        message: 'Password must be at least 8 characters',
+        code: 'PASSWORD_TOO_SHORT'
+      });
+    }
+
+    // Check if any platform admin already exists
+    const existingAdmin = await User.findOne({ role: 'platform_admin' });
+    if (existingAdmin) {
+      return res.status(409).json({
+        success: false,
+        message: 'A platform administrator already exists. Setup can only be performed once.',
+        code: 'PLATFORM_ADMIN_ALREADY_EXISTS'
+      });
+    }
+
+    // Look up the Role document by name to link it to the user
+    const Role = require('../models/Role');
+    const roleDoc = await Role.findOne({ name: 'platform_admin', is_system_role: true });
+
+    // Create the platform admin user
+    const user = await User.create({
+      name: name.trim(),
+      email: email.toLowerCase().trim(),
+      password,
+      role: 'platform_admin',
+      roles: roleDoc ? [roleDoc._id] : [],
+      isActive: true,
+      failed_login_attempts: 0,
+      locked_until: null
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'Platform administrator created successfully.',
+      data: {
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role
+      }
+    });
+  } catch (error) {
+    if (error.code === 'EMAIL_ALREADY_REGISTERED') {
+      return res.status(409).json({
+        success: false,
+        message: 'Email already registered',
+        code: 'EMAIL_ALREADY_REGISTERED'
+      });
+    }
+    next(error);
+  }
+};
+
+/**
  * Get all active sessions (admin only - platform admin)
  * GET /api/auth/admin/sessions
  */

@@ -14,7 +14,9 @@ const {
   getMySessions,
   getUserSessions,
   forceLogoutUser,
-  getAllSessions
+  getAllSessions,
+  checkPlatformAdminStatus,
+  setupPlatformAdmin
 } = require('../controllers/userAuthController');
 const { protect, authorize } = require('../middleware/auth');
 const validateRequest = require('../middleware/validateRequest');
@@ -42,6 +44,8 @@ router.post('/login', loginValidation, validateRequest, stripUnvalidatedBody, lo
 router.post('/refresh', body('refresh_token').notEmpty().withMessage('Refresh token required'), validateRequest, stripUnvalidatedBody, refresh);
 router.post('/forgot-password', forgotPassword);
 router.post('/reset-password', resetPassword);
+router.get('/platform-admin-status', checkPlatformAdminStatus);
+router.post('/setup-platform-admin', setupPlatformAdmin);
 
 // Protected routes
 router.get('/me', protect, getMe);
