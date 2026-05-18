@@ -36,6 +36,12 @@ exports.createPurchaseOrder = async (req, res, next) => {
     payload.createdBy = req.user.id;
     payload.status = payload.status || 'draft';
 
+    // Normalize freight defaults if provided
+    if (payload.freight) {
+      payload.freight.account = payload.freight.account || '5110';
+      payload.freight.paymentMethod = payload.freight.paymentMethod || 'on_account';
+    }
+
     const po = await PurchaseOrder.create(payload);
     
     const sendEmailOnCreate = req.body.sendEmail || false;
@@ -55,7 +61,7 @@ exports.updatePurchaseOrder = async (req, res, next) => {
     if (po.status !== 'draft') return res.status(409).json({ success: false, message: 'Only draft POs can be edited' });
 
     // Update fields individually to ensure Mongoose tracks changes properly
-    const allowedFields = ['supplier', 'warehouse', 'orderDate', 'expectedDeliveryDate', 'currencyCode', 'exchangeRate', 'notes', 'lines'];
+    const allowedFields = ['supplier', 'warehouse', 'orderDate', 'expectedDeliveryDate', 'currencyCode', 'exchangeRate', 'notes', 'lines', 'freight'];
     for (const field of allowedFields) {
       if (req.body[field] !== undefined) {
         po[field] = req.body[field];

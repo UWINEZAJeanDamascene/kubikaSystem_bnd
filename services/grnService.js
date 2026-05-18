@@ -37,6 +37,28 @@ async function confirmGRN(grn, opts = {}) {
     if (grn.status === 'confirmed' || grn.journalEntryId) {
       return grn;
     }
+    // Freight allocation across lines (Scenario B)
+    const freightData = grn.freight || {};
+    const freightAmount = Number(freightData.actualAmount) || 0;
+    const includeFreightInCost = !!freightData.includeInInventoryCost;
+    const allocationMethod = freightData.allocationMethod || 'by_value';
+    const totalGoodsValue = (grn.lines || []).reduce((s, l) => s + (Number(l.unitCost) * Number(l.qtyReceived)), 0);
+    const totalQtyReceived = (grn.lines || []).reduce((s, l) => s + Number(l.qtyReceived), 0);
+
+    if (freightAmount > 0 && includeFreightInCost && totalGoodsValue > 0) {
+      for (const line of grn.lines || []) {
+        const lineValue = Number(line.unitCost) * Number(line.qtyReceived);
+        let allocatedFreight = 0;
+        if (allocationMethod === 'by_value') {
+          allocatedFreight = freightAmount * (lineValue / totalGoodsValue);
+        } else {
+          allocatedFreight = freightAmount * (Number(line.qtyReceived) / totalQtyReceived);
+        }
+        const newUnitCost = lineValue > 0 ? (lineValue + allocatedFreight) / Number(line.qtyReceived) : Number(line.unitCost);
+        line.unitCost = Math.round(newUnitCost * 1000000) / 1000000;
+      }
+    }
+
     // create batches and update product stock
     for (const line of grn.lines || []) {
       // create batch via InventoryService if available
@@ -81,9 +103,21 @@ async function confirmGRN(grn, opts = {}) {
       const invAcct = DEFAULT_ACCOUNTS.inventory;
       journalLines.push({ type: 'debit', account: invAcct, amount: amt, narration: `Purchase - ${grn.referenceNo}` });
     }
+
+    // Freight handling (reuse freightAmount and includeFreightInCost from allocation block)
+    const freightAcct = freightData.account || DEFAULT_ACCOUNTS.freightIn || '5110';
+    if (freightAmount > 0 && !includeFreightInCost) {
+      journalLines.push({ type: 'debit', account: freightAcct, amount: freightAmount, narration: `Freight In - ${grn.referenceNo}` });
+      apTotal += freightAmount;
+    }
+
     if (apTotal > 0) {
-      const apAcct = DEFAULT_ACCOUNTS.accountsPayable;
-      journalLines.push({ type: 'credit', account: apAcct, amount: apTotal, narration: `AP - ${grn.referenceNo}` });
+      const paymentMethod = freightData.paymentMethod || 'on_account';
+      let creditAcct = DEFAULT_ACCOUNTS.accountsPayable;
+      if (paymentMethod === 'cash') creditAcct = DEFAULT_ACCOUNTS.cashInHand || '1000';
+      else if (paymentMethod === 'bank_transfer') creditAcct = DEFAULT_ACCOUNTS.cashAtBank || '1100';
+      else if (paymentMethod === 'mobile_money') creditAcct = DEFAULT_ACCOUNTS.mtnMoMo || '1200';
+      journalLines.push({ type: 'credit', account: creditAcct, amount: apTotal, narration: `AP - ${grn.referenceNo}` });
     }
 
     // compute totals and create journal (single argument object expected by tests)

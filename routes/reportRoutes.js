@@ -21,6 +21,7 @@ const { getFinancialRatios } = require('../controllers/financialRatiosController
 
 // Liability Reports controller
 const { getDebtMaturitySchedule, getInterestExpenseAnalysis } = require('../controllers/liabilityReportsController');
+const laborCostReportController = require('../controllers/laborCostReportController');
 
 // Budget vs Actual report
 const BudgetService = require('../services/budgetService');
@@ -82,5 +83,9 @@ router.get('/budget-vs-actual', async (req, res) => {
     res.status(400).json({ success: false, error: error.message });
   }
 });
+
+// Labor Cost Analysis routes
+router.get('/labor-cost-analysis', laborCostReportController.getLaborCostAnalysis);
+router.get('/payroll-audit-trail', laborCostReportController.getPayrollAuditTrail);
 
 module.exports = router;

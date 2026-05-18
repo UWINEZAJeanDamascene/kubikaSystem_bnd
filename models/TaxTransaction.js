@@ -88,6 +88,7 @@ const taxTransactionSchema = new mongoose.Schema({
       'payroll_run',          // Payroll run
       'tax_settlement',       // Tax payment to authorities
       'asset_purchase',       // Asset purchase
+      'reversal',             // Journal entry reversal
       'manual'                // Manual adjustment
     ],
     required: true,

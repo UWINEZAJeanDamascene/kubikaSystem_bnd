@@ -65,7 +65,26 @@ const payrollSchema = new mongoose.Schema({
   
   // Net Pay
   netPay: { type: Number, default: 0 },
-  
+
+  // Labor cost allocation (Direct Labor Auto-Posting)
+  laborAllocation: {
+    directAmount: { type: Number, default: 0 },
+    indirectAmount: { type: Number, default: 0 },
+    directPercentage: { type: Number, default: 0 },
+    indirectPercentage: { type: Number, default: 0 },
+    // Source of the split: 'employee_default', 'timesheet', 'department_default', 'manual'
+    source: {
+      type: String,
+      enum: ['employee_default', 'timesheet', 'department_default', 'manual', 'direct_only', 'indirect_only'],
+      default: null
+    },
+    timesheetId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Timesheet',
+      default: null
+    }
+  },
+
   // Rwanda-Specific Contributions (Employer)
   contributions: {
     rssbEmployerPension: { type: Number, default: 0 },   // 6% Employer Pension (RSSB)

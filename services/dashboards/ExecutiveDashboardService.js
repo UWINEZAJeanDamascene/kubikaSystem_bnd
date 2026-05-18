@@ -251,7 +251,10 @@ class ExecutiveDashboardService {
       {
         $match: {
           company: new mongoose.Types.ObjectId(companyId),
-          status: 'posted'
+          status: 'posted',
+          // Exclude the opening balance journal entry to avoid double-counting
+          // opening balances which are stored on BankAccount.openingBalance
+          sourceType: { $ne: 'opening_balance' }
         }
       },
       { $unwind: '$lines' },
@@ -281,13 +284,14 @@ class ExecutiveDashboardService {
       return s + (val ? parseFloat(val.toString()) : 0)
     }, 0)
     const pettyCashOpeningTotal = pettyCash.reduce((s, p) => s + (p.openingBalance || 0), 0)
-    // If there are no journal entries in the system for cash accounts
-    // yet opening balances exist, treat cash balance as zero to avoid
-    // surfacing opening balances as activity when no transactions exist.
+    // If there are no NON-opening journal entries for cash accounts
+    // but opening balances exist on the bank/petty records, return the
+    // opening totals (so the dashboard reflects the actual opening position).
     if (result.length === 0 && (bankOpeningTotal + pettyCashOpeningTotal) > 0) {
-      return 0
+      return bankOpeningTotal + pettyCashOpeningTotal
     }
 
+    // Combine posted activity (excluding opening_balance) with stored opening balances
     return journalBalance + bankOpeningTotal + pettyCashOpeningTotal
   }
 

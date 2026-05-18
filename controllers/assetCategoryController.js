@@ -10,8 +10,13 @@ const { parsePagination, paginationMeta } = require('../utils/pagination');
 // Get all categories for a company
 exports.getCategories = async (req, res) => {
   try {
-    const companyId = req.user.company._id;
+    // Resolve company id: prefer req.company (populated by auth), fallback to req.user.company, or allow ?companyId= for platform admin workflows
+    const companyId = (req.company && req.company._id) || (req.user && req.user.company && req.user.company._id) || req.query.companyId;
     const { includeDeleted, autoSeed } = req.query;
+
+    if (!companyId) {
+      return res.status(400).json({ success: false, error: 'Company context missing' });
+    }
 
     const query = { company: companyId };
     if (!includeDeleted) {

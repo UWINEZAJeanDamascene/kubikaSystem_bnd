@@ -1,5 +1,5 @@
 const mongoose = require('mongoose');
-const { generateUniqueCode } = require('./utils/autoIncrement');
+const { generateUniqueCode, generateSKU } = require('./utils/autoIncrement');
 
 const productHistorySchema = new mongoose.Schema({
   action: {
@@ -240,9 +240,34 @@ productSchema.virtual('availableStock').get(function() {
 });
 
 // Add history entry before save
+// Before validation, auto-generate SKU if missing using product name
+productSchema.pre('validate', async function(next) {
+  if (this.isNew) {
+    if (!this.sku || String(this.sku).trim() === '') {
+      // Derive prefix from product name: prefer acronym of capital letters (e.g., "Personal Computer" -> PC)
+      // Fallback: first three letters of name (e.g., "Laptop" -> LAP)
+      const name = String(this.name || '').trim();
+      let prefix = '';
+      const caps = name.match(/[A-Z]/g);
+      if (caps && caps.length >= 2) {
+        prefix = (caps[0] + caps[1]).toUpperCase();
+      } else {
+        // take first three alpha characters
+        const letters = name.replace(/[^A-Za-z]/g, '').toUpperCase();
+        prefix = letters.substring(0, 3) || 'PRD';
+      }
+
+      // Generate SKU as PREFIX-001
+      this.sku = await generateSKU(prefix, mongoose.model('Product'), this.company, 'sku', 3, true);
+    }
+  }
+  next();
+});
+
+// After validation, ensure uniqueness/conflicts handled before save
 productSchema.pre('save', async function(next) {
   if (this.isNew) {
-    // Handle SKU conflicts - if SKU already exists, generate a unique one
+    // If SKU conflicts (rare), fallback to generic unique code
     if (this.sku) {
       const existing = await mongoose.model('Product').findOne({
         company: this.company,
@@ -253,7 +278,7 @@ productSchema.pre('save', async function(next) {
         this.sku = await generateUniqueCode('PRD', mongoose.model('Product'), this.company, 'sku');
       }
     }
-    
+
     // Only record creation history when we have a creator reference.
     if (this.createdBy) {
       this.history.push({

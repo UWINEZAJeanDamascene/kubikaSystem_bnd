@@ -13,10 +13,30 @@ const budgetSchema = new mongoose.Schema(
       required: true,
       trim: true,
     },
+    code: {
+      type: String,
+      trim: true,
+      uppercase: true,
+      default: null,
+      index: true,
+    },
     description: {
       type: String,
       trim: true,
       default: "",
+    },
+    purpose: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    tags: {
+      type: [String],
+      default: [],
+      set: (value) =>
+        Array.isArray(value)
+          ? value.map((tag) => String(tag).trim()).filter(Boolean)
+          : [],
     },
     category: {
       type: String,
@@ -26,8 +46,13 @@ const budgetSchema = new mongoose.Schema(
     },
     type: {
       type: String,
-      enum: ["revenue", "expense", "profit"],
+      enum: ["revenue", "expense", "profit", "opex", "capex", "project"],
       default: "expense",
+    },
+    budget_cycle: {
+      type: String,
+      enum: ["fixed_year", "rolling"],
+      default: "fixed_year",
     },
     fiscal_year: {
       type: Number,
@@ -54,6 +79,43 @@ const budgetSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Department",
       default: null,
+    },
+    owner_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+      index: true,
+    },
+    entity_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Company",
+      default: null,
+      index: true,
+    },
+    base_currency: {
+      type: String,
+      trim: true,
+      uppercase: true,
+      default: null,
+    },
+    exchange_rate_type: {
+      type: String,
+      enum: ["fixed", "spot", "average"],
+      default: "spot",
+    },
+    exchange_rate: {
+      type: Number,
+      default: 1,
+      min: 0,
+    },
+    allow_multi_currency: {
+      type: Boolean,
+      default: false,
+    },
+    allocation_method: {
+      type: String,
+      enum: ["manual", "top_down", "bottom_up", "percentage_split"],
+      default: "manual",
     },
     status: {
       type: String,
@@ -224,9 +286,16 @@ budgetSchema.index(
   { company_id: 1, fiscal_year: 1, name: 1, scenario_type: 1 },
   { unique: true },
 );
+budgetSchema.index(
+  { company_id: 1, code: 1, scenario_type: 1 },
+  { unique: true, partialFilterExpression: { code: { $type: "string" } } },
+);
 budgetSchema.index({ company_id: 1, status: 1 });
 budgetSchema.index({ company_id: 1, type: 1 });
 budgetSchema.index({ company_id: 1, department: 1 });
+budgetSchema.index({ company_id: 1, owner_id: 1 });
+budgetSchema.index({ company_id: 1, entity_id: 1 });
+budgetSchema.index({ company_id: 1, tags: 1 });
 budgetSchema.index({ company_id: 1, periodStart: 1, periodEnd: 1 });
 budgetSchema.index({ company_id: 1, scenario_group_id: 1 });
 budgetSchema.index({ company_id: 1, parent_budget_id: 1 });

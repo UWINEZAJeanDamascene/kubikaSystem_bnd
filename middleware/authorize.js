@@ -29,6 +29,10 @@ class PermissionService {
     for (const permission of role.permissions) {
       // Wildcard resource matches everything
       if (permission.resource === '*') {
+        if (role.name === 'admin') {
+          return true;
+        }
+
         if (permission.actions.includes(action) || permission.actions.includes('*')) {
           return true;
         }

@@ -159,6 +159,25 @@ exports.postSettlement = async (req, res) => {
   }
 };
 
+// Post income tax accrual - book the computed tax as a real journal entry
+exports.postIncomeTaxAccrual = async (req, res) => {
+  try {
+    const companyId = req.user.company._id;
+    const userId = req.user._id;
+
+    const result = await TaxService.postIncomeTaxAccrual(companyId, req.body, userId);
+
+    res.status(201).json({
+      success: true,
+      data: result,
+      message: `Income tax accrual of ${result.amount.toLocaleString()} posted successfully. Journal entry ${result.journal_entry.entryNumber}.`,
+    });
+  } catch (error) {
+    const status = error.message?.startsWith("TAX_AMOUNT_REQUIRED") ? 400 : 500;
+    res.status(status).json({ success: false, message: error.message });
+  }
+};
+
 // =====================================================
 // TAX TRACKING (existing)
 // =====================================================
@@ -453,27 +472,23 @@ exports.addPayment = async (req, res) => {
       let taxPayableAccount;
       switch (tax.taxType) {
         case "vat":
-          taxPayableAccount =
-            DEFAULT_ACCOUNTS.vatOutput || DEFAULT_ACCOUNTS.vatPayable;
+          taxPayableAccount = DEFAULT_ACCOUNTS.vatOutput;
           break;
         case "paye":
-          taxPayableAccount =
-            DEFAULT_ACCOUNTS.payePayableNew || DEFAULT_ACCOUNTS.payePayable;
+          taxPayableAccount = DEFAULT_ACCOUNTS.payePayable;
           break;
         case "income_tax":
         case "corporate_income_tax":
           taxPayableAccount = DEFAULT_ACCOUNTS.incomeTaxPayable;
           break;
         case "rssb":
-          taxPayableAccount =
-            DEFAULT_ACCOUNTS.rssbPayableNew || DEFAULT_ACCOUNTS.rssbPayable;
+          taxPayableAccount = DEFAULT_ACCOUNTS.rssbPayable;
           break;
         case "withholding":
           taxPayableAccount = DEFAULT_ACCOUNTS.withholdingTaxPayable;
           break;
         default:
-          taxPayableAccount =
-            DEFAULT_ACCOUNTS.vatOutput || DEFAULT_ACCOUNTS.vatPayable;
+          taxPayableAccount = DEFAULT_ACCOUNTS.vatOutput;
       }
 
       const paymentAmount = Number(req.body.amount) || 0;
@@ -935,8 +950,8 @@ exports.getTaxDashboard = async (req, res) => {
       { $group: { _id: null, total: { $sum: "$lines.credit" } } },
     ]);
 
-    // 6. Get PAYE Payable balance from Journal Entries (legacy 2200 + new 2230)
-    const payePayableCodes = ["2200", "2230"];
+    // 6. Get PAYE Payable balance from Journal Entries
+    const payePayableCodes = ["2230"];
     const payePayableMatch = {
       company: new mongoose.Types.ObjectId(companyId),
       status: "posted",

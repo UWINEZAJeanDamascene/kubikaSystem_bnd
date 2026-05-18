@@ -94,6 +94,16 @@ const {
   processRefund
 } = require('../controllers/purchaseReturnController');
 
+const {
+  createFreightBill,
+  updateFreightBill,
+  confirmFreightBill,
+  listFreightBills,
+  getFreightBill,
+  deleteFreightBill,
+  getFreightAnalysis
+} = require('../controllers/freightBillController');
+
 const { protect, authorize } = require('../middleware/auth');
 const { requirePermission } = require('../middleware/rbacMiddleware');
 const logAction = require('../middleware/logAction');
@@ -226,5 +236,19 @@ router.route('/purchase-returns/:id/confirm')
 
 router.route('/purchase-returns/:id/refund')
   .post(requirePermission('purchase_returns', 'update'), logAction('stock'), processRefund);
+
+// ========== FREIGHT BILLS ==========
+router.route('/freight-bills')
+  .get(requirePermission('grn', 'read'), listFreightBills)
+  .post(requirePermission('grn', 'create'), logAction('stock'), createFreightBill);
+
+router.route('/freight-bills/:id')
+  .get(requirePermission('grn', 'read'), getFreightBill)
+  .put(requirePermission('grn', 'update'), logAction('stock'), updateFreightBill)
+  .delete(requirePermission('grn', 'delete'), logAction('stock'), deleteFreightBill);
+
+router.post('/freight-bills/:id/confirm', requirePermission('grn', 'confirm'), logAction('stock'), confirmFreightBill);
+
+router.get('/freight-analysis', requirePermission('grn', 'read'), getFreightAnalysis);
 
 module.exports = router;

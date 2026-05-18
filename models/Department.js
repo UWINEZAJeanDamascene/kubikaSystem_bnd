@@ -27,6 +27,11 @@ const departmentSchema = new mongoose.Schema({
     ref: 'User',
     default: null
   },
+  defaultLaborAccount: {
+    type: String,
+    enum: ['5300', '5400'],
+    default: '5400'
+  },
   budgetLimit: {
     type: Number,
     default: 0

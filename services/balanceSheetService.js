@@ -110,12 +110,12 @@ class BalanceSheetService {
       return BalanceSheetService._emptyPeriodData();
     }
 
-    // Get all balance sheet accounts
+    // Get all accounts that have balances (include all types so fallback logic
+    // is not needed for correctly-typed expense/revenue accounts)
     const accountCodes = accountBalances.map((b) => b._id);
     const accounts = await ChartOfAccount.find({
       code: { $in: accountCodes },
       company: new mongoose.Types.ObjectId(companyId),
-      type: { $in: ["asset", "liability", "equity"] },
     }).lean();
 
     const accountMap = {};
@@ -160,11 +160,12 @@ class BalanceSheetService {
           } else if (codeNum >= 5000 && codeNum < 6000) {
             inferredType = 'cogs';
             inferredNormal = 'debit';
-          } else if (codeNum >= 6000 && codeNum < 7000) {
+          } else if (codeNum >= 6000 && codeNum < 8000) {
+            // 6000-6999: operating expenses; 7000-7999: special/clearing expense accounts (7100, etc.)
             inferredType = 'expense';
             inferredNormal = 'debit';
           } else {
-            // Default to asset for unknown ranges
+            // Default to asset for unknown ranges (8000+)
             inferredType = 'asset';
             inferredNormal = 'debit';
           }
@@ -274,6 +275,14 @@ class BalanceSheetService {
             ...line,
             maturity_classification: "current"
           });
+        } else if (
+          ["vat_output", "paye_payable", "rssb_payable", "withholding_tax_payable", "income_tax_payable"].includes(subtype)
+        ) {
+          // Tax payables are always current liabilities (<12 months)
+          currentLiabilityLines.push({
+            ...line,
+            maturity_classification: "current"
+          });
         } else {
           // Default: check account code range for loans (typically 2100-2199 current, 2200-2299 non-current)
           const codeNum = Number(account.code);
@@ -347,6 +356,39 @@ class BalanceSheetService {
         current_period_net_profit: currentPeriodNetProfit,
       });
       equityLines.sort((a, b) =>
+        a.account_code.localeCompare(b.account_code, undefined, {
+          numeric: true,
+        }),
+      );
+    }
+
+    // ── Inject computed income tax payable if P&L auto-computed tax ──
+    // When the P&L computes statutory tax (no journal entry posted yet), the tax
+    // liability must still appear on the balance sheet so that
+    // Assets = Liabilities + Equity holds.
+    if (plData.computed_tax && plData.tax && plData.tax.total > 0) {
+      const computedTax = Math.round(plData.tax.total * 100) / 100;
+      const existingTaxLine = currentLiabilityLines.find(
+        (l) => l.account_code === "2400",
+      );
+      if (existingTaxLine) {
+        existingTaxLine.amount =
+          Math.round((existingTaxLine.amount + computedTax) * 100) / 100;
+        existingTaxLine.includes_computed_tax = true;
+        existingTaxLine.computed_tax_amount = computedTax;
+      } else {
+        currentLiabilityLines.push({
+          account_id: null,
+          account_code: "2400",
+          account_name: "Income Tax Payable",
+          sub_type: "income_tax_payable",
+          amount: computedTax,
+          maturity_classification: "current",
+          is_computed: true,
+          computed_tax_amount: computedTax,
+        });
+      }
+      currentLiabilityLines.sort((a, b) =>
         a.account_code.localeCompare(b.account_code, undefined, {
           numeric: true,
         }),

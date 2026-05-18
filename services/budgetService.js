@@ -197,14 +197,26 @@ class BudgetService {
     const budgetData = {
       company_id: companyId,
       name: data.name,
+      code: data.code || null,
       description: data.description || '',
+      purpose: data.purpose || '',
+      tags: Array.isArray(data.tags) ? data.tags : [],
       type: data.type || 'expense',
       fiscal_year: data.fiscal_year,
       status: 'draft',
       created_by: userId,
       department: data.department || null,
+      owner_id: data.owner_id || null,
+      entity_id: data.entity_id || companyId,
+      parent_budget_id: data.parent_budget_id || null,
       notes: data.notes || '',
-      periodType: data.periodType || 'yearly'
+      periodType: data.periodType || 'yearly',
+      budget_cycle: data.budget_cycle || 'fixed_year',
+      base_currency: data.base_currency || null,
+      exchange_rate_type: data.exchange_rate_type || 'spot',
+      exchange_rate: data.exchange_rate != null ? Number(data.exchange_rate) : 1,
+      allow_multi_currency: Boolean(data.allow_multi_currency),
+      allocation_method: data.allocation_method || 'manual'
     };
 
     if (data.periodStart) budgetData.periodStart = new Date(data.periodStart);
@@ -249,7 +261,15 @@ class BudgetService {
     const skip = (page - 1) * limit;
 
     const [data, total] = await Promise.all([
-      Budget.find(query).sort({ fiscal_year: -1, name: 1 }).skip(skip).limit(limit).lean(),
+      Budget.find(query)
+        .populate('department', 'name code')
+        .populate('owner_id', 'name email')
+        .populate('entity_id', 'name code base_currency')
+        .populate('parent_budget_id', 'name code fiscal_year')
+        .sort({ fiscal_year: -1, name: 1 })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
       Budget.countDocuments(query)
     ]);
 
@@ -351,6 +371,10 @@ class BudgetService {
       .populate('created_by', 'name email')
       .populate('approved_by', 'name email')
       .populate('workflow_id', 'name description')
+      .populate('department', 'name code')
+      .populate('owner_id', 'name email')
+      .populate('entity_id', 'name code base_currency')
+      .populate('parent_budget_id', 'name code fiscal_year')
       .populate('locked_by', 'name email')
       .populate('unlocked_by', 'name email')
       .populate('rejected_by', 'name email')
@@ -372,8 +396,10 @@ class BudgetService {
     }
 
     // Only allow updating safe fields
-    const allowed = ['name', 'description', 'type', 'department', 'notes', 'amount',
-      'periodStart', 'periodEnd', 'periodType', 'status'];
+    const allowed = ['name', 'code', 'description', 'purpose', 'tags', 'type', 'department',
+      'owner_id', 'entity_id', 'parent_budget_id', 'notes', 'amount', 'periodStart', 'periodEnd', 'periodType',
+      'status', 'budget_cycle', 'base_currency', 'exchange_rate_type', 'exchange_rate',
+      'allow_multi_currency', 'allocation_method'];
     const updateData = {};
     const changedFields = [];
 

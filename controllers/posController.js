@@ -14,17 +14,25 @@ const sendPOSEmail = async (invoice, company, client, action = 'created') => {
     const config = require('../src/config/environment').getConfig();
     if (!config.features?.emailNotifications) {
       console.log('[POS Email] Email notifications disabled');
-      return;
+      return false;
     }
 
     const clientEmail = client?.contact?.email || client?.email;
-    if (clientEmail) {
-      // Populate product data for email
-      const invoiceWithProducts = await Invoice.findById(invoice._id).populate('items.product', 'name');
-      await emailService.sendInvoiceEmail(invoiceWithProducts, company, client);
+    if (!clientEmail) {
+      console.warn('[POS Email] No client email found for invoice:', invoice.invoiceNumber || invoice._id);
+      return false;
     }
+
+    // Populate product data for email
+    const invoiceWithProducts = await Invoice.findById(invoice._id).populate('items.product', 'name');
+    const sent = await emailService.sendInvoiceEmail(invoiceWithProducts, company, client);
+    if (!sent) {
+      console.warn('[POS Email] sendInvoiceEmail returned false for invoice:', invoice.invoiceNumber || invoice._id);
+    }
+    return !!sent;
   } catch (err) {
-    console.error('[POS Email] Failed to send email:', err.message);
+    console.error('[POS Email] Failed to send email:', err && err.message ? err.message : err);
+    return false;
   }
 };
 
@@ -274,7 +282,8 @@ exports.createSale = async (req, res, next) => {
     // Send email notification
     const sendEmailOnCreate = req.body.sendEmail || false;
     if (sendEmailOnCreate) {
-      await sendPOSEmail(invoice, company, client, 'created');
+      const ok = await sendPOSEmail(invoice, company, client, 'created');
+      if (!ok) console.warn('[POS Email] Email not sent for invoice:', invoice.invoiceNumber || invoice._id);
     }
 
     res.status(201).json({ success: true, data: invoice });

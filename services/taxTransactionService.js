@@ -17,25 +17,19 @@ class TaxTransactionService {
    * This defines which account codes represent which tax events.
    */
   static TAX_ACCOUNT_MAP = {
-    // ── VAT Accounts (Legacy) ────────────────────────────────────────
-    '1500': { taxType: 'vat_input', direction: 'input' },           // VAT Receivable (legacy)
-    '2100': { taxType: 'vat_output', direction: 'output' },         // VAT Payable (legacy)
-    
-    // ── VAT Accounts (New) ──────────────────────────────────────────
+    // ── VAT Accounts ──────────────────────────────────────────
     '2210': { taxType: 'vat_input', direction: 'input' },           // VAT Input
     '2220': { taxType: 'vat_output', direction: 'output' },         // VAT Output
-    
-    // ── PAYE (Legacy + New) ─────────────────────────────────────────
-    '2200': { taxType: 'paye', direction: 'withheld' },             // PAYE Payable (legacy)
-    '2230': { taxType: 'paye', direction: 'withheld' },             // PAYE Tax Payable (new)
-    
-    // ── RSSB (Legacy + New) ─────────────────────────────────────────
-    '2300': { taxType: 'rssb_employee', direction: 'withheld' },    // RSSB Payable (legacy)
-    '2240': { taxType: 'rssb_employee', direction: 'withheld' },    // RSSB Payable (new)
+
+    // ── PAYE ─────────────────────────────────────────
+    '2230': { taxType: 'paye', direction: 'withheld' },             // PAYE Tax Payable
+
+    // ── RSSB ─────────────────────────────────────────
+    '2240': { taxType: 'rssb_employee', direction: 'withheld' },    // RSSB Payable
     '2310': { taxType: 'rssb_employer', direction: 'withheld' },    // Employer Contribution Payable
-    
-    // ── Other Taxes ──────────────────────────────────────────────────
-    '2400': { taxType: 'corporate_income', direction: 'output' },   // Income Tax Payable
+
+    // ── Income Tax ────────────────────────────────────────────────────
+    '2400': { taxType: 'income_tax', direction: 'withheld' },        // Income Tax Payable
     '2500': { taxType: 'withholding', direction: 'withheld' },      // Withholding Tax Payable
   };
 
@@ -115,34 +109,32 @@ class TaxTransactionService {
       const creditAmount = this.coerceAmount(line.credit);
       
       // For VAT accounts:
-      // - Debit to 1500 (VAT Receivable) = Input VAT (purchases) - direction: input
-      // - Credit to 2100 (VAT Payable) = Output VAT (sales) - direction: output
-      // - Debit to 2100 (VAT Payable) = VAT reversal (credit notes) - direction: input (reverses output)
-      // - Credit to 1500 (VAT Receivable) = Input VAT reversal (purchase returns) - direction: output (reverses input)
-      
+      // - Debit to 2210 (VAT Input) = Input VAT (purchases) - direction: input
+      // - Credit to 2220 (VAT Output) = Output VAT (sales) - direction: output
+      // - Debit to 2220 (VAT Output) = VAT reversal (credit notes) - direction: input (reverses output)
+      // - Credit to 2210 (VAT Input) = Input VAT reversal (purchase returns) - direction: output (reverses input)
+
       let amount = 0;
       let direction = taxInfo.direction;
       let taxType = taxInfo.taxType;
 
-      if (accountCode === '1500' || accountCode === '2210') {
-        // VAT Input (Receivable)
+      if (accountCode === '2210') {
+        // VAT Input
         amount = debitAmount; // Debit = Input VAT
         if (creditAmount > 0 && debitAmount === 0) {
-          // Credit to VAT Input = reversal of input VAT
-          amount = creditAmount;
+          // Reversal of input VAT (purchase return)
           taxType = 'vat_input_reversed';
           direction = 'output'; // Reversal of input = adds to liability
         }
-      } else if (accountCode === '2100' || accountCode === '2220') {
+      } else if (accountCode === '2220') {
         // VAT Output (Payable)
         amount = creditAmount; // Credit = Output VAT
         if (debitAmount > 0 && creditAmount === 0) {
-          // Debit to VAT Output = reversal of output VAT
-          amount = debitAmount;
+          // Reversal of output VAT (credit note)
           taxType = 'vat_output_reversed';
           direction = 'input'; // Reversal of output = reduces liability
         }
-      } else if (accountCode === '2300' || accountCode === '2240') {
+      } else if (accountCode === '2240') {
         // RSSB Payable - need to distinguish employee vs employer
         // Check if this came from payroll with employer contribution info
         amount = creditAmount || debitAmount;

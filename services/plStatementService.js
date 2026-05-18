@@ -241,9 +241,12 @@ class PLStatementService {
         } else if (subtype === "distribution") {
           // Distribution Costs: Transport & Delivery (5700), Marketing & Advertising (5850)
           distributionCostLines.push(line);
-        } else if (subtype === "other_expense") {
+        } else if (subtype === "other_expense" && code !== "5910") {
           // Other Expenses: Bad Debt (5250), Other Expenses (6100)
           otherExpenseLines.push(line);
+        } else if (code === "5910") {
+          // Miscellaneous Expenses → Administrative Expenses (override stale subtype)
+          adminExpenseLines.push(line);
         } else if (subtype === "operating") {
           // Classify remaining operating expenses by code (backward-compat fallback)
           if (code === "5700" || code === "5850") {

@@ -75,12 +75,16 @@ async function initializeServer() {
   require('./models/SalaryHistory');
   require('./models/Payroll');
   require('./models/PayrollRun');
+  require('./models/Timesheet');
   require('./models/PurchaseReturn');
   require('./models/Testimonial');
   require('./models/DeliveryNote');
   require('./models/GoodsReceivedNote');
+  require('./models/FreightBill');
   require('./models/PettyCash');
   require('./models/BankAccount');
+  require('./models/FixedDeposit');
+  require('./models/InterestAccrual');
   require('./models/Encumbrance');
   require('./models/BudgetLine');
   require('./models/Project');
@@ -98,6 +102,7 @@ async function initializeServer() {
    require('./models/ARReceiptAllocation');
    require('./models/ARBadDebtWriteoff');
    require('./models/CreditNote');
+   require('./models/EmployeeAdvance');
    require('./src/models/ImportJob');
 
   app = express();
@@ -250,10 +255,15 @@ async function initializeServer() {
   apiRouter.use('/taxes', require('./routes/taxRoutes'));
   apiRouter.use('/payroll', require('./routes/payrollRoutes'));
   apiRouter.use('/payroll-runs', require('./routes/payrollRunRoutes'));
+  apiRouter.use('/timesheets', require('./routes/timesheetRoutes'));
   apiRouter.use('/employees', require('./routes/employeeRoutes'));
+  apiRouter.use('/employee-advances', require('./routes/employeeAdvanceRoutes'));
   apiRouter.use('/expenses', require('./routes/expenseRoutes'));
+  apiRouter.use('/prepaid-expenses', require('./routes/prepaidExpenseRoutes'));
+  apiRouter.use('/deferred-revenue', require('./routes/deferredRevenueRoutes'));
   apiRouter.use('/petty-cash', require('./routes/pettyCashRoutes'));
   apiRouter.use('/bank-accounts', require('./routes/bankAccountRoutes'));
+  apiRouter.use('/interest', require('./routes/interestRoutes'));
   apiRouter.use('/purchase-returns', require('./routes/purchaseReturnRoutes'));
   apiRouter.use('/payables', require('./routes/payableRoutes'));
   apiRouter.use('/ar', require('./routes/arRoutes'));

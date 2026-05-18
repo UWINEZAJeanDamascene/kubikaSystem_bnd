@@ -7,7 +7,10 @@ const {
   updateDepartment,
   deleteDepartment,
   assignUsers,
-  removeUser
+  removeUser,
+  getDepartmentEmployees,
+  assignEmployees,
+  removeEmployee
 } = require('../controllers/departmentController');
 const { protect, authorize } = require('../middleware/auth');
 const logAction = require('../middleware/logAction');
@@ -25,5 +28,10 @@ router.route('/:id')
 
 router.put('/:id/assign-users', authorize('admin'), logAction('department'), assignUsers);
 router.put('/:id/remove-user/:userId', authorize('admin'), logAction('department'), removeUser);
+
+// Employee department routes
+router.get('/:id/employees', protect, getDepartmentEmployees);
+router.put('/:id/assign-employees', authorize('admin'), logAction('department'), assignEmployees);
+router.put('/:id/remove-employee/:employeeId', authorize('admin'), logAction('department'), removeEmployee);
 
 module.exports = router;

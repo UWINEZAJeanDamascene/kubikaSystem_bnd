@@ -99,6 +99,11 @@ router.post('/:id/logo', uploadFor('companies').single('logo'), companyControlle
 router.get('/:id/setup-status', companyController.getSetupStatus);
 router.post('/:id/setup/:step', companyController.markSetupStepComplete);
 
+// Capital management
+router.post('/capital/share', companyController.recordShareCapital);
+router.post('/capital/owner', companyController.recordOwnerCapital);
+router.get('/capital/balance', companyController.getCapitalBalance);
+
 router.get('/:id', companyController.getCompany);
 router.put('/:id', companyController.updateCompany);
 router.delete('/:id', companyController.deleteCompany);

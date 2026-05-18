@@ -333,8 +333,8 @@ exports.createDirectSale = async (req, res, next) => {
           DEFAULT_ACCOUNTS.salesRevenue
         );
         const vatAccount = await JournalService.getMappedAccountCode(
-          companyId, 'tax', 'vatPayable', 
-          DEFAULT_ACCOUNTS.vatPayable
+          companyId, 'tax', 'vatOutput',
+          DEFAULT_ACCOUNTS.vatOutput
         );
         const cogsAccount = await JournalService.getMappedAccountCode(
           companyId, 'inventory', 'costOfGoodsSold', 
@@ -373,12 +373,17 @@ exports.createDirectSale = async (req, res, next) => {
             }
           } else if (paymentMethod === 'cash' || paymentMethod === 'card') {
             debitAccount = await JournalService.getMappedAccountCode(
-              companyId, 'cash', 'cashOnHand', 
+              companyId, 'cash', 'cashOnHand',
               DEFAULT_ACCOUNTS.cashOnHand || '1000'
+            );
+          } else if (paymentMethod === 'mobile_money') {
+            debitAccount = await JournalService.getMappedAccountCode(
+              companyId, 'cash', 'mtnMoMo',
+              DEFAULT_ACCOUNTS.mtnMoMo || '1200'
             );
           } else {
             debitAccount = await JournalService.getMappedAccountCode(
-              companyId, 'cash', 'cashAtBank', 
+              companyId, 'cash', 'cashAtBank',
               DEFAULT_ACCOUNTS.cashAtBank || '1100'
             );
           }

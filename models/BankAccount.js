@@ -648,6 +648,50 @@ const bankAccountSchema = new mongoose.Schema(
       default: "bank",
     },
 
+    // === Interest Income Fields ===
+    interestAccountType: {
+      type: String,
+      enum: ["current", "savings", "fixed_deposit", "call_account"],
+      default: "current",
+    },
+    interestRate: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    interestCalculationMethod: {
+      type: String,
+      enum: ["simple", "compound_monthly", "compound_quarterly", "daily_average"],
+      default: "simple",
+    },
+    interestCreditFrequency: {
+      type: String,
+      enum: ["monthly", "quarterly", "annually"],
+      default: "monthly",
+    },
+    interestIncomeAccount: {
+      type: String,
+      default: "4300",
+      trim: true,
+    },
+    interestAccrualAccount: {
+      type: String,
+      default: "1350",
+      trim: true,
+    },
+    bankStatementReference: {
+      type: Boolean,
+      default: false,
+    },
+    interestStartDate: {
+      type: Date,
+      default: null,
+    },
+    lastInterestPostedDate: {
+      type: Date,
+      default: null,
+    },
+
     // Created by (who created this account)
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,

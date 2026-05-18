@@ -32,6 +32,9 @@ router.post('/settlements/vat', taxController.postVatSettlement);
 router.post('/settlements/paye', taxController.postPayeSettlement);
 router.post('/settlements/rssb', taxController.postRssbSettlement);
 
+// Income tax accrual - post the P&L computed tax as a real journal entry
+router.post('/income-tax-accrual', taxController.postIncomeTaxAccrual);
+
 // Tax preview - live calculation without posting
 router.post('/preview', taxController.previewTax);
 

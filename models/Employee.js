@@ -86,6 +86,11 @@ const employeeSchema = new mongoose.Schema({
     trim: true,
     default: null
   },
+  departmentRef: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Department',
+    default: null
+  },
   position: {
     type: String,
     trim: true,
@@ -99,6 +104,24 @@ const employeeSchema = new mongoose.Schema({
   managerId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Employee',
+    default: null
+  },
+
+  // Labor classification (for Direct Labor Auto-Posting)
+  laborType: {
+    type: String,
+    enum: ['direct', 'indirect', 'mixed'],
+    default: null
+  },
+  defaultDirectPercentage: {
+    type: Number,
+    min: 0,
+    max: 100,
+    default: null
+  },
+  costCenter: {
+    type: String,
+    trim: true,
     default: null
   },
 

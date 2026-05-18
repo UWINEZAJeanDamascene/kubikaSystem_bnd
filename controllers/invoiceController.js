@@ -1,3 +1,4 @@
+const mongoose = require("mongoose");
 const Invoice = require("../models/Invoice");
 const Product = require("../models/Product");
 const Client = require("../models/Client");
@@ -378,8 +379,8 @@ exports.createInvoice = async (req, res, next) => {
             const vatAcct = await JournalService.getMappedAccountCode(
               companyId,
               "tax",
-              "vatPayable",
-              DEFAULT_ACCOUNTS.vatPayable,
+              "vatOutput",
+              DEFAULT_ACCOUNTS.vatOutput,
             );
 
             const revenueLines = [];
@@ -590,8 +591,8 @@ exports.createInvoice = async (req, res, next) => {
             const vatAcct = await JournalService.getMappedAccountCode(
               companyId,
               "tax",
-              "vatPayable",
-              DEFAULT_ACCOUNTS.vatPayable,
+              "vatOutput",
+              DEFAULT_ACCOUNTS.vatOutput,
             );
 
             const revenueLines = [];
@@ -1430,6 +1431,7 @@ exports.recordPayment = async (req, res, next) => {
     await invoice.save();
 
     // Create journal entry for payment (Cash/Bank Debit, Accounts Receivable Credit)
+    let journalEntry = null;
     try {
       // Get bank account code if bank payment
       let bankAccountCode = null;
@@ -1449,7 +1451,7 @@ exports.recordPayment = async (req, res, next) => {
         }
       }
 
-      await JournalService.createInvoicePaymentEntry(companyId, req.user.id, {
+      journalEntry = await JournalService.createInvoicePaymentEntry(companyId, req.user.id, {
         invoiceNumber: invoice.invoiceNumber,
         date: new Date(),
         amount: amount,
@@ -1488,6 +1490,7 @@ exports.recordPayment = async (req, res, next) => {
             notes:
               notes ||
               `Payment for invoice ${invoice.invoiceNumber} from ${invoice.client?.name || "Customer"}`,
+            journalEntryId: journalEntry?._id || null,
           });
         }
       } catch (bankError) {

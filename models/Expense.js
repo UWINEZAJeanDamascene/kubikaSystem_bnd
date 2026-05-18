@@ -152,6 +152,20 @@ const expenseSchema = new mongoose.Schema({
     default: true  // Most business expenses recoverable
   },
 
+  // Withholding Tax (Rwanda WHT)
+  withholdingTax: {
+    type: Number,
+    default: 0
+  },
+  withholdingTaxRate: {
+    type: Number,
+    default: 0
+  },
+  withholdingTaxInRWF: {
+    type: Number,
+    default: 0
+  },
+
   // Department / Cost Center allocation
   department_id: {
     type: mongoose.Schema.Types.ObjectId,
@@ -387,13 +401,44 @@ expenseSchema.pre('save', async function(next) {
     this.period = `${year}-${month}`;
   }
 
+  // Auto-calculate withholding tax from rraTaxCategory
+  // Looks up TaxRate collection first (configurable), falls back to rate embedded in category name
+  if ((this.isNew || this.isModified('amount') || this.isModified('rraTaxCategory')) && this.rraTaxCategory && this.rraTaxCategory.startsWith('wht_')) {
+    const rateMatch = this.rraTaxCategory.match(/wht_(\d+)/);
+    const impliedRate = rateMatch ? parseFloat(rateMatch[1]) : 0;
+
+    let appliedRate = impliedRate;
+    if (this.company && impliedRate > 0) {
+      try {
+        const TaxRate = mongoose.model('TaxRate');
+        const taxRate = await TaxRate.findOne({
+          company: this.company,
+          type: 'withholding',
+          rate_pct: impliedRate,
+          is_active: true,
+        }).sort({ effective_from: -1 });
+        if (taxRate) {
+          appliedRate = taxRate.rate_pct;
+        }
+      } catch (_) {
+        // TaxRate lookup failed — use implied rate fallback
+      }
+    }
+
+    this.withholdingTaxRate = appliedRate;
+    this.withholdingTax = Math.round(this.amount * (appliedRate / 100) * 100) / 100;
+  } else if (!this.rraTaxCategory || !this.rraTaxCategory.startsWith('wht_')) {
+    this.withholdingTaxRate = 0;
+    this.withholdingTax = 0;
+  }
+
   // Set total_amount if not set
   if (this.isNew && !this.total_amount && this.amount !== undefined) {
     this.total_amount = this.amount + (this.tax_amount || 0);
   }
 
   // Calculate RWF amounts for Rwanda functional currency
-  if (this.isNew || this.isModified('amount') || this.isModified('tax_amount') || this.isModified('exchangeRate') || this.isModified('currencyCode')) {
+  if (this.isNew || this.isModified('amount') || this.isModified('tax_amount') || this.isModified('exchangeRate') || this.isModified('currencyCode') || this.isModified('withholdingTax')) {
     // Set defaults
     if (!this.currencyCode) this.currencyCode = 'RWF';
     if (!this.exchangeRate || this.exchangeRate <= 0) {
@@ -405,11 +450,13 @@ expenseSchema.pre('save', async function(next) {
       this.exchangeRate = 1;
       this.amountInRWF = this.amount;
       this.taxAmountInRWF = this.tax_amount || 0;
+      this.withholdingTaxInRWF = this.withholdingTax || 0;
       this.totalAmountInRWF = this.total_amount || (this.amount + (this.tax_amount || 0));
     } else {
       // Foreign currency conversion
       this.amountInRWF = Math.round(this.amount * this.exchangeRate * 100) / 100;
       this.taxAmountInRWF = Math.round((this.tax_amount || 0) * this.exchangeRate * 100) / 100;
+      this.withholdingTaxInRWF = Math.round((this.withholdingTax || 0) * this.exchangeRate * 100) / 100;
       this.totalAmountInRWF = this.amountInRWF + this.taxAmountInRWF;
     }
   }

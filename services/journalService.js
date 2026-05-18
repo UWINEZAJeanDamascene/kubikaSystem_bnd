@@ -451,9 +451,9 @@ class JournalService {
       ));
     }
 
-    // Credit: VAT Payable
+    // Credit: VAT Output
     if (vatAmount > 0) {
-      const vatAcct = await this.getMappedAccountCode(companyId, 'tax', 'vatPayable', DEFAULT_ACCOUNTS.vatPayable);
+      const vatAcct = await this.getMappedAccountCode(companyId, 'tax', 'vatOutput', DEFAULT_ACCOUNTS.vatOutput);
       lines.push(this.createCreditLine(
         vatAcct,
         vatAmount,
@@ -585,19 +585,19 @@ class JournalService {
 
   /**
    * Credit Note issued (customer returns goods)
-   * 
+   *
    * For sales return with refund (money returned to customer):
    *   Debit: Sales Returns (4100)
-   *   Debit: VAT Payable (2100)
+   *   Debit: VAT Output (2220)
    *   Credit: Cash/Bank (based on refund method)
-   *   
+   *
    * For inventory return:
    *   Debit: Inventory (1400)
    *   Credit: Cost of Goods Sold (5000)
-   * 
+   *
    * For sales return without immediate refund (reduce AR):
    *   Debit: Sales Returns (4100)
-   *   Debit: VAT Payable (2100)
+   *   Debit: VAT Output (2220)
    *   Credit: Accounts Receivable (1300)
    */
   static async createCreditNoteEntry(companyId, userId, creditNote) {
@@ -635,9 +635,9 @@ class JournalService {
       ));
     }
 
-    // Debit: VAT Payable (not VAT Receivable - this is a reduction of output VAT)
+    // Debit: VAT Output (reduction of output VAT on credit note)
     if (vatAmount > 0) {
-      const vatAcct = await this.getMappedAccountCode(companyId, 'tax', 'vatPayable', DEFAULT_ACCOUNTS.vatPayable);
+      const vatAcct = await this.getMappedAccountCode(companyId, 'tax', 'vatOutput', DEFAULT_ACCOUNTS.vatOutput);
       lines.push(this.createDebitLine(
         vatAcct,
         vatAmount,
@@ -829,6 +829,7 @@ class JournalService {
     const lines = [];
     const totalAmount = expense.amount || 0;
     const vatAmount = expense.vatAmount || 0;
+    const whtAmount = expense.withholdingTax || 0;
     
     // Net expense amount (excluding VAT)
     const netAmount = totalAmount - vatAmount;
@@ -879,13 +880,25 @@ class JournalService {
       ));
     }
 
-    // Credit: Cash/Bank (total amount including VAT)
-    const totalCredit = netAmount + vatAmount;
-    lines.push(this.createCreditLine(
-      cashAccount,
-      totalCredit,
-      expense.description || 'Expense payment'
-    ));
+    // Credit: Withholding Tax Payable (2500) — if WHT applies
+    if (whtAmount > 0) {
+      const whtAccount = await this.getMappedAccountCode(companyId, 'tax', 'withholdingTaxPayable', DEFAULT_ACCOUNTS.withholdingTaxPayable);
+      lines.push(this.createCreditLine(
+        whtAccount,
+        whtAmount,
+        `${expense.description || 'Expense'} - WHT withheld`
+      ));
+    }
+
+    // Credit: Cash/Bank (total amount including VAT, minus WHT withheld)
+    const totalCredit = netAmount + vatAmount - whtAmount;
+    if (totalCredit > 0) {
+      lines.push(this.createCreditLine(
+        cashAccount,
+        totalCredit,
+        expense.description || 'Expense payment'
+      ));
+    }
 
     return this.createEntry(companyId, userId, {
       date: expense.date || new Date(),
@@ -1343,7 +1356,7 @@ class JournalService {
   /**
    * Purchase return (returning goods to supplier)
    * Debit: Accounts Payable
-   * Credit: Inventory + VAT Receivable
+   * Credit: Purchase Returns (contra-COGS, flows to P&L) + VAT Input reversal
    */
   static async createPurchaseReturnEntry(companyId, userId, purchaseReturn) {
     const lines = [];
@@ -1358,12 +1371,12 @@ class JournalService {
       `Purchase Return ${purchaseReturn.returnNumber}`
     ));
 
-    // Credit: Inventory
+    // Credit: Purchase Returns (5200) — contra-COGS, flows to P&L
     if (subtotal > 0) {
       lines.push(this.createCreditLine(
-        DEFAULT_ACCOUNTS.inventory,
+        DEFAULT_ACCOUNTS.purchaseReturns || '5200',
         subtotal,
-        `Purchase Return ${purchaseReturn.returnNumber} - Inventory`
+        `Purchase Return ${purchaseReturn.returnNumber}`
       ));
     }
 
@@ -1430,10 +1443,9 @@ class JournalService {
 
   /**
    * Stock adjustment entry
-   * Uses 7100 Stock Adjustment (Asset) as clearing account for all adjustments.
+   * Uses 7100 Stock Adjustment (Expense) for all adjustments.
    * Surplus: DR Inventory, CR 7100
    * Shortage: DR 7100, CR Inventory
-   * The 7100 balance is periodically cleared to Stock Adjustment Loss (5150) if needed.
    */
   static async createStockAdjustmentEntry(companyId, userId, adjustment) {
     const lines = [];
@@ -1535,7 +1547,7 @@ class JournalService {
     // Credit: Tax Payable (withheld tax)
     if (taxWithheld > 0) {
       lines.push(this.createCreditLine(
-        DEFAULT_ACCOUNTS.payePayableNew || DEFAULT_ACCOUNTS.payePayable || '2230',
+        DEFAULT_ACCOUNTS.payePayable || '2230',
         taxWithheld,
         `Tax withheld: ${payroll.period || 'Salary'}`
       ));
@@ -1544,19 +1556,24 @@ class JournalService {
     // Credit: RSSB Payable (social security)
     if (ssnWithheld > 0) {
       lines.push(this.createCreditLine(
-        DEFAULT_ACCOUNTS.rssbPayableNew || DEFAULT_ACCOUNTS.rssbPayable || '2240',
+        DEFAULT_ACCOUNTS.rssbPayable || '2240',
         ssnWithheld,
         `RSSB contribution: ${payroll.period || 'Salary'}`
       ));
     }
 
-    // Credit: Employer Contribution Payable
+    // Employer contribution
     const employerContribution = payroll.employerContribution || 0;
     if (employerContribution > 0) {
+      lines.push(this.createDebitLine(
+        DEFAULT_ACCOUNTS.rssbEmployerCost || '6150',
+        employerContribution,
+        `Employer contribution: ${payroll.period || 'Salary'}`
+      ));
       lines.push(this.createCreditLine(
         DEFAULT_ACCOUNTS.employerContributionPayable || '2310',
         employerContribution,
-        `Employer contribution: ${payroll.period || 'Salary'}`
+        `Employer contribution payable: ${payroll.period || 'Salary'}`
       ));
     }
 
@@ -1590,7 +1607,7 @@ class JournalService {
 
     // Debit: Tax Payable
     lines.push(this.createDebitLine(
-      DEFAULT_ACCOUNTS.vatOutput || DEFAULT_ACCOUNTS.taxPayable || '2220',
+      DEFAULT_ACCOUNTS.vatOutput || '2220',
       amount,
       `Tax payment: ${taxPayment.taxType || 'VAT'}`
     ));

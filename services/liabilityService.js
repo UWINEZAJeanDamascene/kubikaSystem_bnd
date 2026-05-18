@@ -4,6 +4,7 @@ const JournalEntry = require('../models/JournalEntry');
 const ChartOfAccount = require('../models/ChartOfAccount');
 const { BankAccount } = require('../models/BankAccount');
 const { nextSequence } = require('./sequenceService');
+const { DEFAULT_ACCOUNTS } = require('../constants/chartOfAccounts');
 const PeriodService = require('./periodService');
 
 class LiabilityService {
@@ -76,7 +77,7 @@ class LiabilityService {
       let journalEntryId = null;
       if (data.principalAmount > 0) {
         const entryDate = data.startDate || new Date();
-        const entryNumber = await nextSequence(companyId, 'JE');
+        const entryNumber = await JournalEntry.generateEntryNumber(companyId);
         const period = await PeriodService.getOpenPeriodId(companyId, entryDate);
 
         // Get bank account code (from bank account or use default)
@@ -215,7 +216,7 @@ class LiabilityService {
 
     try {
       const entryDate = paymentDate ? new Date(paymentDate) : new Date();
-      const entryNumber = await nextSequence(companyId, 'JE');
+      const entryNumber = await JournalEntry.generateEntryNumber(companyId);
       const period = await PeriodService.getOpenPeriodId(companyId, entryDate);
 
       // Build journal lines
@@ -230,21 +231,37 @@ class LiabilityService {
       ];
 
       if (interestPortion > 0) {
-        if (!liability.interestExpenseAccountId) {
-          throw new Error('INTEREST_ACCOUNT_NOT_CONFIGURED');
-        }
-        const interestAccount = await ChartOfAccount.findOne({ 
-          _id: liability.interestExpenseAccountId, 
-          company: companyId 
+        // Debit 2800 Accrued Interest (clearing the accrued liability)
+        const accruedInterestAccount = await ChartOfAccount.findOne({
+          code: DEFAULT_ACCOUNTS.accruedInterest,
+          company: companyId
         });
-        if (interestAccount) {
+        if (accruedInterestAccount) {
           lines.push({
-            accountCode: interestAccount.code,
-            accountName: interestAccount.name,
-            description: 'Interest expense',
+            accountCode: accruedInterestAccount.code,
+            accountName: accruedInterestAccount.name,
+            description: 'Interest payment (clearing accrued interest)',
             debit: interestPortion,
             credit: 0
           });
+        } else {
+          // Fallback: if 2800 not configured, use interest expense account
+          if (!liability.interestExpenseAccountId) {
+            throw new Error('INTEREST_ACCOUNT_NOT_CONFIGURED');
+          }
+          const interestAccount = await ChartOfAccount.findOne({
+            _id: liability.interestExpenseAccountId,
+            company: companyId
+          });
+          if (interestAccount) {
+            lines.push({
+              accountCode: interestAccount.code,
+              accountName: interestAccount.name,
+              description: 'Interest expense (direct — no prior accrual)',
+              debit: interestPortion,
+              credit: 0
+            });
+          }
         }
       }
 
@@ -358,8 +375,18 @@ class LiabilityService {
 
     try {
       const entryDate = chargeDate ? new Date(chargeDate) : new Date();
-      const entryNumber = await nextSequence(companyId, 'JE');
+      const entryNumber = await JournalEntry.generateEntryNumber(companyId);
       const period = await PeriodService.getOpenPeriodId(companyId, entryDate);
+
+      // Look up Accrued Interest account (2800)
+      const accruedInterestAccount = await ChartOfAccount.findOne({
+        code: DEFAULT_ACCOUNTS.accruedInterest,
+        company: companyId
+      });
+
+      if (!accruedInterestAccount) {
+        throw new Error('ACCRUED_INTEREST_ACCOUNT_NOT_FOUND: Account 2800 Accrued Interest is required for interest accrual');
+      }
 
       const journalEntry = await JournalEntry.create({
         company: companyId,
@@ -379,9 +406,9 @@ class LiabilityService {
             credit: 0
           },
           {
-            accountCode: liabilityAccount.code,
-            accountName: liabilityAccount.name,
-            description: 'Interest added to liability',
+            accountCode: accruedInterestAccount.code,
+            accountName: accruedInterestAccount.name,
+            description: 'Interest accrued (2800)',
             debit: 0,
             credit: amount
           }
@@ -404,8 +431,7 @@ class LiabilityService {
         notes: data.notes || null
       });
 
-      // Update outstanding balance (interest is added to liability)
-      liability.outstandingBalance = liability.outstandingBalance + amount;
+      // Do NOT add accrued interest to outstandingBalance — 2800 tracks it separately
 
       await liability.save();
 

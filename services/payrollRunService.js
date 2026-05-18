@@ -1,11 +1,13 @@
 const mongoose = require("mongoose");
 const PayrollRun = require("../models/PayrollRun");
 const Payroll = require("../models/Payroll");
+const Employee = require("../models/Employee");
 const JournalEntry = require("../models/JournalEntry");
 const ChartOfAccount = require("../models/ChartOfAccount");
 const { BankAccount } = require("../models/BankAccount");
 const { nextSequence } = require("./sequenceService");
 const PeriodService = require("./periodService");
+const LaborAllocationService = require("./laborAllocationService");
 
 class PayrollRunService {
   // ── PREVIEW JOURNAL ENTRY ─────────────────────────────────────────────
@@ -151,15 +153,23 @@ class PayrollRunService {
       );
     }
 
+    // Find runs that are already posted — their records should be blocked
+    const postedRunIds = await PayrollRun.find({
+      company: companyId,
+      status: "posted",
+    }).select("_id").lean();
+    const blockedIds = postedRunIds.map((r) => r._id.toString());
+
     const payrollRecords = await Payroll.find({
       company: companyId,
       record_status: "finalised",
-      $or: [
-        { payroll_run_id: null },
-        { payroll_run_id: { $exists: false } }
-      ],
       "period.month": filterMonth,
       "period.year": filterYear,
+      $or: [
+        { payroll_run_id: null },
+        { payroll_run_id: { $exists: false } },
+        { payroll_run_id: { $nin: blockedIds } },
+      ],
     });
 
     if (payrollRecords.length === 0) {
@@ -171,14 +181,37 @@ class PayrollRunService {
       throw err;
     }
 
+    // ── Validate labor types for direct/mixed employees ─────────────────────
+    const employeeIds = payrollRecords.map((p) => p.employee_id);
+    const laborValidation = await LaborAllocationService.validateLaborTypes(companyId, employeeIds);
+    if (!laborValidation.valid) {
+      const err = new Error(
+        `LABOR_TYPE_MISSING: ${laborValidation.errors.join('; ')}`
+      );
+      err.statusCode = 422;
+      throw err;
+    }
+
+    // ── Flag timesheet variance (>30 points from default) ───────────────────
+    const flagged = await LaborAllocationService.flagTimesheetVariance(
+      companyId, employeeIds, filterMonth, filterYear
+    );
+    const warnings = flagged.map(
+      (f) => `Timesheet variance: ${f.name} — default ${f.defaultPct}% vs timesheet ${f.timesheetPct}% (diff ${f.difference})`
+    );
+
     let totalGross = 0;
     let totalTax = 0;
     let totalRssbEmployee = 0;
     let totalRssbEmployer = 0;
     let totalNet = 0;
+    let totalDirectAmount = 0;
+    let totalIndirectAmount = 0;
+    let totalDirectEmployerRSSB = 0;
+    let totalIndirectEmployerRSSB = 0;
     const lines = [];
 
-    payrollRecords.forEach((p) => {
+    for (const p of payrollRecords) {
       totalGross += p.salary?.grossSalary || 0;
       totalTax += p.deductions?.paye || 0;
       const rssbEmployeePension = p.deductions?.rssbEmployeePension || 0;
@@ -191,10 +224,47 @@ class PayrollRunService {
       totalRssbEmployer += rssbEmployerPension + rssbEmployerMaternity + occupationalHazard;
       totalNet += p.netPay || 0;
 
+      // ── Labor Cost Allocation ───────────────────────────────────────────
+      const grossSalary = p.salary?.grossSalary || 0;
+      const allocation = await LaborAllocationService.allocateForEmployee(
+        p.employee_id,
+        grossSalary,
+        filterMonth,
+        filterYear,
+        companyId
+      );
+
+      totalDirectAmount += allocation.directAmount;
+      totalIndirectAmount += allocation.indirectAmount;
+
+      // Split employer RSSB proportionally
+      const totalEmpRSSB = rssbEmployerPension + rssbEmployerMaternity + occupationalHazard;
+      if (totalEmpRSSB > 0 && grossSalary > 0) {
+        const directRatio = allocation.directAmount / grossSalary;
+        const directRSSB = Math.round(totalEmpRSSB * directRatio * 100) / 100;
+        totalDirectEmployerRSSB += directRSSB;
+        totalIndirectEmployerRSSB += Math.round((totalEmpRSSB - directRSSB) * 100) / 100;
+      } else if (totalEmpRSSB > 0) {
+        totalIndirectEmployerRSSB += totalEmpRSSB;
+      }
+
+      // Update the individual Payroll record with allocation
+      await Payroll.findByIdAndUpdate(p._id, {
+        laborAllocation: {
+          directAmount: allocation.directAmount,
+          indirectAmount: allocation.indirectAmount,
+          directPercentage: allocation.directPct,
+          indirectPercentage: allocation.indirectPct,
+          source: allocation.source,
+          timesheetId: allocation.timesheetId
+        }
+      });
+
       lines.push({
         employee_name: `${p.employee?.firstName} ${p.employee?.lastName}`,
         employee_id: p.employee?.employeeId || "N/A",
         employee_ref_id: p.employee_id || null,
+        employee_department: p.employee?.department || "Unassigned",
         // Income components
         basic_salary: p.salary?.basicSalary || 0,
         transport_allowance: p.salary?.transportAllowance || 0,
@@ -224,8 +294,16 @@ class PayrollRunService {
         total_deductions: p.deductions?.totalDeductions || 0,
         net_pay: p.netPay || 0,
         payroll_id: p._id,
+        // Labor cost allocation fields
+        labor_type: allocation.laborType,
+        direct_amount: allocation.directAmount,
+        indirect_amount: allocation.indirectAmount,
+        direct_percentage: allocation.directPct,
+        indirect_percentage: allocation.indirectPct,
+        allocation_source: allocation.source,
+        timesheet_id: allocation.timesheetId
       });
-    });
+    }
 
     // Include all deductions in net calculation
     const totalHealthInsurance = payrollRecords.reduce((s, p) => s + (p.deductions?.healthInsurance || 0), 0);
@@ -270,6 +348,7 @@ class PayrollRunService {
       lines,
       employee_count: payrollRecords.length,
       notes: data.notes || null,
+      warnings,
       posted_by: null,
     });
 
@@ -504,14 +583,32 @@ class PayrollRunService {
         }
       } else {
         // ── Path B: no prior accruals → post the full payroll journal ──────────
-        // DR Salaries / DR RSSB Employer Cost / CR PAYE / CR RSSB / CR Bank
-        lines.push({
-          accountCode: salaryAccount.code,
-          accountName: salaryAccount.name,
-          description: `Gross payroll ${payrollRun.pay_period_start.toISOString().split("T")[0]} to ${payrollRun.pay_period_end.toISOString().split("T")[0]}`,
-          debit: payrollRun.total_gross,
-          credit: 0,
-        });
+        // DR 5300 Direct Labor / DR 5400 Salaries & Wages / DR 6150 RSSB / CR PAYE / CR RSSB / CR Bank
+        // Calculate totals from line allocations
+        const runDirect = payrollRun.lines.reduce((s, l) => s + (l.direct_amount || 0), 0);
+        const runIndirect = payrollRun.lines.reduce((s, l) => s + (l.indirect_amount || 0), 0);
+
+        // DR 5300 Direct Labor (production/warehouse workers)
+        if (runDirect > 0) {
+          lines.push({
+            accountCode: "5300",
+            accountName: "Direct Labor",
+            description: `Direct labor cost ${payrollRun.pay_period_start.toISOString().split("T")[0]} to ${payrollRun.pay_period_end.toISOString().split("T")[0]}`,
+            debit: runDirect,
+            credit: 0,
+          });
+        }
+
+        // DR 5400 Salaries & Wages (admin, sales, indirect labor)
+        if (runIndirect > 0) {
+          lines.push({
+            accountCode: salaryAccount.code,
+            accountName: salaryAccount.name,
+            description: `Salaries & wages (indirect labor) ${payrollRun.pay_period_start.toISOString().split("T")[0]} to ${payrollRun.pay_period_end.toISOString().split("T")[0]}`,
+            debit: runIndirect,
+            credit: 0,
+          });
+        }
 
         // DR RSSB Employer Contributions (6150 = RSSB Employer Cost)
         if (employerContributions > 0) {
@@ -565,6 +662,13 @@ class PayrollRunService {
 
       const totalDebit = lines.reduce((s, l) => s + (l.debit || 0), 0);
       const totalCredit = lines.reduce((s, l) => s + (l.credit || 0), 0);
+
+      // Avoid duplicate key error when re-posting a reversed run:
+      // update any existing journal entry with same sourceId to voided type
+      await JournalEntry.updateMany(
+        { company: companyId, sourceType: "payroll_run", sourceId: payrollRun._id.toString() },
+        { $set: { sourceType: "payroll_run_voided" } }
+      );
 
       const journalEntry = await JournalEntry.create({
         company: companyId,
@@ -697,14 +801,65 @@ class PayrollRunService {
         isAutoGenerated: false,
       });
 
-      payrollRun.status = "reversed";
+      payrollRun.status = "draft";
       payrollRun.reversal_journal_entry_id = reversalEntry._id;
+
+      // Reverse PAYE remittance journal if exists
+      if (payrollRun.paye_remit_journal_id) {
+        try {
+          const payeEntry = await JournalEntry.findById(payrollRun.paye_remit_journal_id);
+          if (payeEntry) {
+            const payeReversalNum = await nextSequence(companyId, "JE");
+            const payeReversalLines = payeEntry.lines.map((line) => ({
+              accountCode: line.accountCode,
+              accountName: line.accountName,
+              description: `REVERSAL: ${line.description}`,
+              debit: line.credit || 0,
+              credit: line.debit || 0,
+            }));
+            await JournalEntry.create({ company: companyId, entryNumber: payeReversalNum, date: data.reversal_date || new Date(), description: `PAYE Remittance Reversal — ${payrollRun.reference_no}`, sourceType: "payroll_remit_paye_reversal", sourceId: payrollRun._id.toString(), reference: payrollRun.reference_no, status: "posted", lines: payeReversalLines, totalDebit: payeEntry.totalDebit, totalCredit: payeEntry.totalCredit, debitTotal: payeEntry.debitTotal, creditTotal: payeEntry.creditTotal, postedBy: userId, period: periodId, isAutoGenerated: true });
+            // Void original so re-remit won't hit duplicate key
+            payeEntry.sourceType = "payroll_remit_paye_voided";
+            await payeEntry.save();
+          }
+        } catch (e) { console.error("[reverse] PAYE remittance reversal failed:", e.message); }
+      }
+
+      // Reverse RSSB remittance journal if exists
+      if (payrollRun.rssb_remit_journal_id) {
+        try {
+          const rssbEntry = await JournalEntry.findById(payrollRun.rssb_remit_journal_id);
+          if (rssbEntry) {
+            const rssbReversalNum = await nextSequence(companyId, "JE");
+            const rssbReversalLines = rssbEntry.lines.map((line) => ({
+              accountCode: line.accountCode,
+              accountName: line.accountName,
+              description: `REVERSAL: ${line.description}`,
+              debit: line.credit || 0,
+              credit: line.debit || 0,
+            }));
+            await JournalEntry.create({ company: companyId, entryNumber: rssbReversalNum, date: data.reversal_date || new Date(), description: `RSSB Remittance Reversal — ${payrollRun.reference_no}`, sourceType: "payroll_remit_rssb_reversal", sourceId: payrollRun._id.toString(), reference: payrollRun.reference_no, status: "posted", lines: rssbReversalLines, totalDebit: rssbEntry.totalDebit, totalCredit: rssbEntry.totalCredit, debitTotal: rssbEntry.debitTotal, creditTotal: rssbEntry.creditTotal, postedBy: userId, period: periodId, isAutoGenerated: true });
+            // Void original so re-remit won't hit duplicate key
+            rssbEntry.sourceType = "payroll_remit_rssb_voided";
+            await rssbEntry.save();
+          }
+        } catch (e) { console.error("[reverse] RSSB remittance reversal failed:", e.message); }
+      }
+
+      // Clear remittance flags so the run can be re-remitted after re-posting
+      if (payrollRun.remittance) {
+        if (payrollRun.remittance.paye) payrollRun.remittance.paye.remitted = false;
+        if (payrollRun.remittance.rssb) payrollRun.remittance.rssb.remitted = false;
+        payrollRun.markModified('remittance');
+      }
+      payrollRun.paye_remit_journal_id = null;
+      payrollRun.rssb_remit_journal_id = null;
       await payrollRun.save();
 
-      // Set employee records back to finalised status
+      // Set employee records back to finalised and clear payroll_run_id so they can be reused
       await Payroll.updateMany(
         { payroll_run_id: payrollRun._id },
-        { record_status: "finalised" },
+        { record_status: "finalised", payroll_run_id: null },
       );
 
       // Create BankTransaction to restore bank balance on reversal
@@ -735,6 +890,40 @@ class PayrollRunService {
         }
       }
 
+      // Restore bank balance for PAYE remittance reversal
+      if (bankAccountForReversal && payrollRun.remittance?.paye?.amount > 0) {
+        try {
+          await bankAccountForReversal.addTransaction({
+            type: "deposit",
+            amount: payrollRun.remittance.paye.amount,
+            description: `PAYE remittance reversal — PYRL#${payrollRun.reference_no}`,
+            date: data.reversal_date || new Date(),
+            referenceNumber: payrollRun.reference_no,
+            referenceType: "Payment",
+            reference: payrollRun._id,
+            createdBy: userId,
+            notes: `Reversal of PAYE remittance for payroll run ${payrollRun.reference_no}`,
+          });
+        } catch (btErr) { console.error("[reverse] PAYE bank deposit failed:", btErr.message); }
+      }
+
+      // Restore bank balance for RSSB remittance reversal
+      if (bankAccountForReversal && payrollRun.remittance?.rssb?.amount > 0) {
+        try {
+          await bankAccountForReversal.addTransaction({
+            type: "deposit",
+            amount: payrollRun.remittance.rssb.amount,
+            description: `RSSB remittance reversal — PYRL#${payrollRun.reference_no}`,
+            date: data.reversal_date || new Date(),
+            referenceNumber: payrollRun.reference_no,
+            referenceType: "Payment",
+            reference: payrollRun._id,
+            createdBy: userId,
+            notes: `Reversal of RSSB remittance for payroll run ${payrollRun.reference_no}`,
+          });
+        } catch (btErr) { console.error("[reverse] RSSB bank deposit failed:", btErr.message); }
+      }
+
       return payrollRun;
     } catch (err) {
       throw err;
@@ -762,16 +951,54 @@ class PayrollRunService {
       throw new Error("PAYE_ALREADY_REMITTED");
     }
 
-    payrollRun.remittance = {
-      ...payrollRun.remittance,
-      paye: {
-        remitted: true,
-        remitted_date: data.remitted_date ? new Date(data.remitted_date) : new Date(),
-        reference_no: data.reference_no || null,
-        amount: data.amount || payrollRun.total_tax,
-      }
+    if (!payrollRun.remittance) payrollRun.remittance = {};
+    payrollRun.remittance.paye = {
+      remitted: true,
+      remitted_date: data.remitted_date ? new Date(data.remitted_date) : new Date(),
+      reference_no: data.reference_no || null,
+      amount: data.amount || payrollRun.total_tax,
     };
+    payrollRun.markModified('remittance.paye');
     await payrollRun.save();
+
+    try {
+      const taxAccount = await ChartOfAccount.findOne({ _id: payrollRun.tax_payable_account_id, company: companyId });
+      const bankAccount = await BankAccount.findOne({ _id: payrollRun.bank_account_id, company: companyId });
+      const periodId = await PeriodService.getOpenPeriodId(companyId, data.remitted_date || new Date());
+      const entryNumber = await nextSequence(companyId, "JE");
+      const amount = data.amount || payrollRun.total_tax;
+
+      // Void any existing PAYE remittance journal for this run to avoid duplicate key
+      await JournalEntry.updateMany(
+        { company: companyId, sourceType: "payroll_remit_paye", sourceId: payrollRun._id.toString() },
+        { $set: { sourceType: "payroll_remit_paye_voided" } }
+      );
+      const lines = [
+        { accountCode: taxAccount?.code || "2230", accountName: taxAccount?.name || "PAYE Tax Payable", description: "PAYE remitted to RRA", debit: amount, credit: 0 },
+        { accountCode: bankAccount?.ledgerAccountId || "1100", accountName: bankAccount?.name || "Cash at Bank", description: "PAYE remittance payment", debit: 0, credit: amount },
+      ];
+      const journalEntry = await JournalEntry.create({ company: companyId, entryNumber, date: data.remitted_date ? new Date(data.remitted_date) : new Date(), description: `PAYE Remittance — ${payrollRun.reference_no}`, sourceType: "payroll_remit_paye", sourceId: payrollRun._id.toString(), reference: payrollRun.reference_no, status: "posted", lines, totalDebit: amount, totalCredit: amount, debitTotal: amount, creditTotal: amount, postedBy: userId, period: periodId, isAutoGenerated: true });
+      payrollRun.paye_remit_journal_id = journalEntry._id;
+      await payrollRun.save();
+
+      // Create BankTransaction to reduce bank balance for PAYE remittance
+      if (bankAccount && amount > 0) {
+        try {
+          await bankAccount.addTransaction({
+            type: "withdrawal",
+            amount: amount,
+            description: `PAYE remittance — PYRL#${payrollRun.reference_no}${data.reference_no ? ` — Ref: ${data.reference_no}` : ""}`,
+            date: data.remitted_date ? new Date(data.remitted_date) : new Date(),
+            referenceNumber: data.reference_no || payrollRun.reference_no,
+            referenceType: "Payment",
+            reference: payrollRun._id,
+            createdBy: userId,
+            notes: `PAYE remittance for payroll run ${payrollRun.reference_no}`,
+            journalEntryId: journalEntry._id,
+          });
+        } catch (btErr) { console.error("[remitPaye] BankTransaction failed:", btErr.message); }
+      }
+    } catch (je) { console.error("[remitPaye] Journal entry failed:", je.message); }
 
     return payrollRun;
   }
@@ -797,20 +1024,65 @@ class PayrollRunService {
       throw new Error("RSSB_ALREADY_REMITTED");
     }
 
-    // Calculate total RSSB payable = employee deductions + employer contributions
+    // Calculate total RSSB payable = employee deductions + employer pension/maternity
     const totalRssb = (payrollRun.total_other_deductions || 0) +
       payrollRun.lines.reduce((sum, l) => sum + (l.rssb_employer_total || 0), 0);
+    // Occupational hazard is credited to 2310 Employer Contribution Payable during accrual
+    const totalOccupationalHazard = payrollRun.lines.reduce((sum, l) => sum + (l.occupational_hazard || 0), 0);
 
-    payrollRun.remittance = {
-      ...payrollRun.remittance,
-      rssb: {
-        remitted: true,
-        remitted_date: data.remitted_date ? new Date(data.remitted_date) : new Date(),
-        reference_no: data.reference_no || null,
-        amount: data.amount || totalRssb,
-      }
+    if (!payrollRun.remittance) payrollRun.remittance = {};
+    payrollRun.remittance.rssb = {
+      remitted: true,
+      remitted_date: data.remitted_date ? new Date(data.remitted_date) : new Date(),
+      reference_no: data.reference_no || null,
+      amount: data.amount || totalRssb,
     };
+    payrollRun.markModified('remittance.rssb');
     await payrollRun.save();
+
+    try {
+      const otherDedAccount = await ChartOfAccount.findOne({ _id: payrollRun.other_deductions_account_id, company: companyId });
+      const employerContribAccount = await ChartOfAccount.findOne({ code: "2310", company: companyId });
+      const bankAccount = await BankAccount.findOne({ _id: payrollRun.bank_account_id, company: companyId });
+      const periodId = await PeriodService.getOpenPeriodId(companyId, data.remitted_date || new Date());
+      const entryNumber = await nextSequence(companyId, "JE");
+      const rssbAmount = data.amount || totalRssb;
+
+      // Void any existing RSSB remittance journal for this run to avoid duplicate key
+      await JournalEntry.updateMany(
+        { company: companyId, sourceType: "payroll_remit_rssb", sourceId: payrollRun._id.toString() },
+        { $set: { sourceType: "payroll_remit_rssb_voided" } }
+      );
+      const bankCredit = rssbAmount + totalOccupationalHazard;
+      const lines = [
+        { accountCode: otherDedAccount?.code || "2240", accountName: otherDedAccount?.name || "RSSB Payable", description: "RSSB remitted", debit: rssbAmount, credit: 0 },
+      ];
+      if (totalOccupationalHazard > 0) {
+        lines.push({ accountCode: employerContribAccount?.code || "2310", accountName: employerContribAccount?.name || "Employer Contribution Payable", description: "Occupational hazard remitted", debit: totalOccupationalHazard, credit: 0 });
+      }
+      lines.push({ accountCode: bankAccount?.ledgerAccountId || "1100", accountName: bankAccount?.name || "Cash at Bank", description: "RSSB remittance payment", debit: 0, credit: bankCredit });
+      const journalEntry = await JournalEntry.create({ company: companyId, entryNumber, date: data.remitted_date ? new Date(data.remitted_date) : new Date(), description: `RSSB Remittance — ${payrollRun.reference_no}`, sourceType: "payroll_remit_rssb", sourceId: payrollRun._id.toString(), reference: payrollRun.reference_no, status: "posted", lines, totalDebit: bankCredit, totalCredit: bankCredit, debitTotal: bankCredit, creditTotal: bankCredit, postedBy: userId, period: periodId, isAutoGenerated: true });
+      payrollRun.rssb_remit_journal_id = journalEntry._id;
+      await payrollRun.save();
+
+      // Create BankTransaction to reduce bank balance for RSSB remittance
+      if (bankAccount && bankCredit > 0) {
+        try {
+          await bankAccount.addTransaction({
+            type: "withdrawal",
+            amount: bankCredit,
+            description: `RSSB remittance — PYRL#${payrollRun.reference_no}${data.reference_no ? ` — Ref: ${data.reference_no}` : ""}`,
+            date: data.remitted_date ? new Date(data.remitted_date) : new Date(),
+            referenceNumber: data.reference_no || payrollRun.reference_no,
+            referenceType: "Payment",
+            reference: payrollRun._id,
+            createdBy: userId,
+            notes: `RSSB remittance for payroll run ${payrollRun.reference_no}`,
+            journalEntryId: journalEntry._id,
+          });
+        } catch (btErr) { console.error("[remitRssb] BankTransaction failed:", btErr.message); }
+      }
+    } catch (je) { console.error("[remitRssb] Journal entry failed:", je.message); }
 
     return payrollRun;
   }

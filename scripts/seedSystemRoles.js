@@ -23,7 +23,7 @@ const systemRoles = [
     description: 'Company administrator with full company access',
     is_system_role: true,
     permissions: [
-      { resource: '*', actions: ['read', 'create', 'update', 'delete', 'approve', 'post'] }
+      { resource: '*', actions: ['read', 'create', 'update', 'delete', 'approve', 'post', 'confirm', 'admin'] }
     ]
   },
   {
@@ -108,7 +108,7 @@ const systemRoles = [
       { resource: 'products', actions: ['read'] },
       { resource: 'suppliers', actions: ['read', 'create', 'update'] },
       { resource: 'purchase_orders', actions: ['read', 'create', 'update'] },
-      { resource: 'grn', actions: ['read', 'create', 'update'] },
+      { resource: 'grn', actions: ['read', 'create', 'update', 'confirm'] },
       { resource: 'purchase_returns', actions: ['read', 'create', 'update'] },
       { resource: 'ap_payments', actions: ['read'] }
     ]

@@ -1,5 +1,5 @@
 const mongoose = require('mongoose');
-const { generateUniqueCode } = require('./utils/autoIncrement');
+const { generateUniqueCode, generateShortSequentialCode } = require('./utils/autoIncrement');
 
 const warehouseSchema = new mongoose.Schema({
   // Multi-tenancy: company reference
@@ -76,9 +76,9 @@ warehouseSchema.index(
 // Auto-generate warehouse code
 warehouseSchema.pre('save', async function(next) {
   if (this.isNew) {
-    if (!this.code) {
-      // Auto-generate unique code if not provided
-      this.code = await generateUniqueCode('WH', mongoose.model('Warehouse'), this.company, 'code');
+      if (!this.code) {
+      // Auto-generate short sequential warehouse code if not provided (e.g., WH001)
+      this.code = await generateShortSequentialCode('WH', mongoose.model('Warehouse'), this.company, 'code', 3);
     } else {
       // Check if provided code already exists for this company
       const existingWarehouse = await mongoose.model('Warehouse').findOne({
@@ -87,8 +87,8 @@ warehouseSchema.pre('save', async function(next) {
       });
       
       if (existingWarehouse) {
-        // Auto-generate a new unique code instead of throwing error
-        this.code = await generateUniqueCode('WH', mongoose.model('Warehouse'), this.company, 'code');
+        // Auto-generate a new short sequential code instead of throwing error
+        this.code = await generateShortSequentialCode('WH', mongoose.model('Warehouse'), this.company, 'code', 3);
       }
     }
     

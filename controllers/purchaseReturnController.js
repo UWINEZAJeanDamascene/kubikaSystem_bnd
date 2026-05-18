@@ -259,9 +259,9 @@ exports.confirmPurchaseReturn = async (req, res, next) => {
       journalLines.push(JournalService.createCreditLine(vatAcct, totalReturnTax, `VAT reversal ${pr.referenceNo || pr.referenceNo}`));
     }
 
-    // CR Inventory (1400) — reverses the asset from the original GRN
-    const inventoryAcct = await JournalService.getMappedAccountCode(companyId, 'inventory', 'inventory', DEFAULT_ACCOUNTS.inventory);
-    journalLines.push(JournalService.createCreditLine(inventoryAcct, totalReturnNet, `Purchase Return - inventory reversal ${pr.referenceNo || pr.referenceNo}`));
+    // CR Purchase Returns (5200) — contra-COGS, flows to P&L
+    const purchaseReturnsAcct = await JournalService.getMappedAccountCode(companyId, 'purchases', 'purchaseReturns', DEFAULT_ACCOUNTS.purchaseReturns);
+    journalLines.push(JournalService.createCreditLine(purchaseReturnsAcct, totalReturnNet, `Purchase Return - ${pr.referenceNo || pr.referenceNo}`));
 
     // Post journal
     const supplier = await (require('../models/Supplier')).findById(pr.supplier).lean();

@@ -108,7 +108,7 @@ exports.getBalanceSheet = async (req, res, next) => {
 
     // Assets keys
     const assetKeys = ['cashAtBank','cashInHand','pettyCash','mtnMoMo','accountsReceivable','inventory','prepaidExpenses','equipment','computers','vehicles','furniture','buildings','land','machinery'];
-    const liabilityKeys = ['accountsPayable','vatPayable','vatInput','vatOutput','shortTermLoans','longTermLoans','accruedExpenses','incomeTaxPayable','payePayable','payePayableNew','rssbPayable','rssbPayableNew','withholdingTaxPayable'];
+    const liabilityKeys = ['accountsPayable','vatInput','vatOutput','shortTermLoans','longTermLoans','accruedExpenses','incomeTaxPayable','payePayable','rssbPayable','withholdingTaxPayable'];
     const equityKeys = ['shareCapital','retainedEarnings','currentProfit'];
 
     const assets = {};

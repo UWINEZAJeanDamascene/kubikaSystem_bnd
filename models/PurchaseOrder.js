@@ -24,6 +24,14 @@ const purchaseOrderPaymentSchema = new mongoose.Schema({
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
 }, { _id: true });
 
+const freightEstimateSchema = new mongoose.Schema({
+  carrier: { type: String, trim: true },
+  amount: { type: Number, default: 0, min: 0 },
+  paymentMethod: { type: String, enum: ['cash', 'bank_transfer', 'mobile_money', 'on_account'], default: 'on_account' },
+  account: { type: String, default: '5110', trim: true },
+  includeInInventoryCost: { type: Boolean, default: false }
+}, { _id: false });
+
 const purchaseOrderSchema = new mongoose.Schema({
   company: { type: mongoose.Schema.Types.ObjectId, ref: 'Company', required: true },
   referenceNo: { type: String, uppercase: true },
@@ -47,6 +55,7 @@ const purchaseOrderSchema = new mongoose.Schema({
   approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   approvedAt: Date,
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  freight: { type: freightEstimateSchema, default: () => ({}) },
   lines: [poLineSchema]
 }, { timestamps: true });
 

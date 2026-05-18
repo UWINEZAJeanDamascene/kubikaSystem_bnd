@@ -8,6 +8,8 @@ const SerialNumber = require("../models/SerialNumber");
 const JournalService = require("../services/journalService");
 const TaxAutomationService = require("../services/taxAutomationService");
 const emailService = require("../services/emailService");
+const { BankAccount } = require("../models/BankAccount");
+const { DEFAULT_ACCOUNTS } = require("../constants/chartOfAccounts");
 
 const sendCreditNoteEmail = async (note, company, client, action) => {
   try {
@@ -553,22 +555,18 @@ exports.approveCreditNote = async (req, res, next) => {
     // Get refund method from request (bank_transfer, cash, mobile_money, or ar)
     const refundMethod = req.body.refundMethod || "ar";
     let bankAccountCode = null;
+    let bankAccount = null;
     if (
       (refundMethod === "bank_transfer" ||
         refundMethod === "cheque" ||
         refundMethod === "mobile_money") &&
       req.body.bankAccountId
     ) {
-      const { BankAccount } = require("../models/BankAccount");
-
-      // Try to find by _id first (MongoDB ObjectId), then by accountCode
-      let bankAccount = await BankAccount.findOne({
+      bankAccount = await BankAccount.findOne({
         _id: req.body.bankAccountId,
         company: companyId,
         isActive: true,
       });
-
-      // If not found by _id, try finding by accountCode (in case user passed account code like "1100")
       if (!bankAccount) {
         bankAccount = await BankAccount.findOne({
           accountCode: req.body.bankAccountId,
@@ -576,17 +574,15 @@ exports.approveCreditNote = async (req, res, next) => {
           isActive: true,
         });
       }
-
       if (bankAccount && bankAccount.accountCode) {
         bankAccountCode = bankAccount.accountCode;
       }
     }
 
     // Create journal entry for credit note
-    // If refundMethod is not 'ar', it will credit Cash/Bank instead of Accounts Receivable
-    // If reverseStock is true, it will also add Inventory/COGS entries
+    let journalEntry = null;
     try {
-      await JournalService.createCreditNoteEntry(companyId, req.user.id, {
+      journalEntry = await JournalService.createCreditNoteEntry(companyId, req.user.id, {
         _id: note._id,
         creditNoteNumber: note.creditNoteNumber,
         date: note.date,
@@ -601,7 +597,26 @@ exports.approveCreditNote = async (req, res, next) => {
         "Error creating journal entry for credit note:",
         journalError,
       );
-      // Don't fail the credit note approval if journal entry fails
+    }
+
+    // Create BankTransaction when refunding to a bank account
+    if (bankAccount && journalEntry) {
+      try {
+        await bankAccount.addTransaction({
+          type: 'withdrawal',
+          amount: note.grandTotal,
+          description: `Credit note refund: ${note.creditNoteNumber}`,
+          date: note.date || new Date(),
+          referenceNumber: note.creditNoteNumber,
+          referenceType: 'CreditNote',
+          reference: note._id,
+          createdBy: req.user.id,
+          notes: 'Credit note refund to customer',
+          journalEntryId: journalEntry._id,
+        });
+      } catch (btErr) {
+        console.error('BankTransaction creation failed for credit note refund:', btErr.message);
+      }
     }
 
     res.json({ success: true, data: note });
@@ -784,14 +799,20 @@ exports.recordRefund = async (req, res, next) => {
     await note.save();
 
     // Create journal entry for refund (Accounts Receivable Debit, Cash/Bank Credit)
+    let journalEntry = null;
+    let bankAccount = null;
+    if (req.body.bankAccountId) {
+      bankAccount = await BankAccount.findOne({
+        _id: req.body.bankAccountId,
+        company: companyId,
+        isActive: true,
+      });
+    }
     try {
       const { DEFAULT_ACCOUNTS } = require("../constants/chartOfAccounts");
-      const cashAccount =
-        paymentMethod === "bank"
-          ? DEFAULT_ACCOUNTS.cashAtBank
-          : DEFAULT_ACCOUNTS.cashInHand;
+      const cashAccount = bankAccount?.ledgerAccountId || (paymentMethod === "bank" ? DEFAULT_ACCOUNTS.cashAtBank : DEFAULT_ACCOUNTS.cashInHand);
 
-      await JournalService.createEntry(companyId, req.user.id, {
+      journalEntry = await JournalService.createEntry(companyId, req.user.id, {
         date: new Date(),
         description: `Refund for Credit Note ${note.creditNoteNumber}`,
         sourceType: "credit_note_refund",
@@ -816,7 +837,26 @@ exports.recordRefund = async (req, res, next) => {
         "Error creating journal entry for credit note refund:",
         journalError,
       );
-      // Don't fail the refund if journal entry fails
+    }
+
+    // Create BankTransaction when refunding from a bank account
+    if (bankAccount && journalEntry) {
+      try {
+        await bankAccount.addTransaction({
+          type: 'withdrawal',
+          amount,
+          description: `Credit note refund: ${note.creditNoteNumber}`,
+          date: new Date(),
+          referenceNumber: note.creditNoteNumber,
+          referenceType: 'CreditNote',
+          reference: note._id,
+          createdBy: req.user.id,
+          notes: 'Credit note refund to customer',
+          journalEntryId: journalEntry._id,
+        });
+      } catch (btErr) {
+        console.error('BankTransaction creation failed for credit note refund:', btErr.message);
+      }
     }
 
     res.json({ success: true, data: note });

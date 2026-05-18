@@ -93,6 +93,16 @@ const payrollRunSchema = new mongoose.Schema({
     ref: 'JournalEntry',
     default: null
   },
+  paye_remit_journal_id: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'JournalEntry',
+    default: null
+  },
+  rssb_remit_journal_id: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'JournalEntry',
+    default: null
+  },
 
   // Notes
   notes: {
@@ -113,6 +123,7 @@ const payrollRunSchema = new mongoose.Schema({
       employee_name: { type: String, required: true },
       employee_id: { type: String, required: true },
       employee_ref_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee', default: null },
+      employee_department: { type: String, default: 'Unassigned' },
       // Income components
       basic_salary: { type: Number, default: 0 },
       transport_allowance: { type: Number, default: 0 },
@@ -141,7 +152,15 @@ const payrollRunSchema = new mongoose.Schema({
       other_deductions: { type: Number, default: 0 },
       total_deductions: { type: Number, default: 0 },
       net_pay: { type: Number, required: true },
-      payroll_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Payroll' }
+      payroll_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Payroll' },
+      // Labor cost allocation (Direct Labor Auto-Posting)
+      labor_type: { type: String, enum: ['direct', 'indirect', 'mixed'], default: null },
+      direct_amount: { type: Number, default: 0 },
+      indirect_amount: { type: Number, default: 0 },
+      direct_percentage: { type: Number, default: 0 },
+      indirect_percentage: { type: Number, default: 0 },
+      allocation_source: { type: String, enum: ['employee_default', 'timesheet', 'department_default', 'manual', 'direct_only', 'indirect_only'], default: null },
+      timesheet_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Timesheet', default: null }
     }
   ],
 
@@ -173,6 +192,12 @@ const payrollRunSchema = new mongoose.Schema({
     generated_at: { type: Date, default: null },
     file_name: { type: String, default: null },
     format: { type: String, enum: ['csv', 'excel', 'xml'], default: 'csv' }
+  },
+
+  // Warnings for supervisor review (e.g., timesheet variance)
+  warnings: {
+    type: [String],
+    default: []
   }
 }, {
   timestamps: true

@@ -120,11 +120,19 @@ exports.getProduct = async (req, res, next) => {
       product = await Product.findOne({ _id: req.params.id, company: companyId })
         .populate('category', 'name')
         .populate('supplier', 'name code email phone address')
+        .populate('preferredSupplier', 'name code')
+        .populate('defaultWarehouse', 'name code')
         .populate('createdBy', 'name email')
         .populate('history.changedBy', 'name email');
     } catch (popErr) {
       // If related models/schemas are not registered in the test environment, fallback to basic find
-      product = await Product.findOne({ _id: req.params.id, company: companyId });
+      product = await Product.findOne({ _id: req.params.id, company: companyId })
+        .populate('category', 'name')
+        .populate('supplier', 'name code email phone address')
+        .populate('preferredSupplier', 'name code')
+        .populate('defaultWarehouse', 'name code location')
+        .populate('createdBy', 'name email')
+        .populate('history.changedBy', 'name email');
     }
 
     if (!product) {

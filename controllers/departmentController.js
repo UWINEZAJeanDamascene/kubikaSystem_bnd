@@ -1,5 +1,6 @@
 const Department = require('../models/Department');
 const User = require('../models/User');
+const Employee = require('../models/Employee');
 
 // @desc    Get all departments
 // @route   GET /api/departments
@@ -48,18 +49,19 @@ exports.getDepartments = async (req, res, next) => {
       .populate('manager', 'name email')
       .sort({ code: 1 });
 
-    // Get user counts per department
-    const userCounts = await User.aggregate([
-      { $match: { company: companyId, department: { $ne: null } } },
-      { $group: { _id: '$department', count: { $sum: 1 } } }
+    // Get employee counts per department (using departmentRef)
+    const employeeCounts = await Employee.aggregate([
+      { $match: { company: companyId, departmentRef: { $ne: null } } },
+      { $group: { _id: '$departmentRef', count: { $sum: 1 } } }
     ]);
 
     const countMap = {};
-    userCounts.forEach(uc => { countMap[uc._id.toString()] = uc.count; });
+    employeeCounts.forEach(ec => { countMap[ec._id.toString()] = ec.count; });
 
     const data = departments.map(d => ({
       ...d.toObject(),
-      userCount: countMap[d._id.toString()] || 0
+      employeeCount: countMap[d._id.toString()] || 0,
+      userCount: countMap[d._id.toString()] || 0 // keep for backward compatibility
     }));
 
     res.json({ success: true, count: data.length, data });
@@ -80,12 +82,12 @@ exports.getDepartment = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Department not found' });
     }
 
-    // Get users in this department
-    const users = await User.find({ company: companyId, department: department._id })
-      .select('name email role isActive')
-      .sort({ name: 1 });
+    // Get employees in this department (using departmentRef)
+    const employees = await Employee.find({ company: companyId, departmentRef: department._id })
+      .select('employeeId firstName lastName email position status')
+      .sort({ firstName: 1 });
 
-    res.json({ success: true, data: { ...department.toObject(), users } });
+    res.json({ success: true, data: { ...department.toObject(), employees } });
   } catch (error) {
     next(error);
   }
@@ -97,7 +99,7 @@ exports.getDepartment = async (req, res, next) => {
 exports.createDepartment = async (req, res, next) => {
   try {
     const companyId = req.user.company._id;
-    const { code, name, description, manager, budgetLimit } = req.body;
+    const { code, name, description, manager, budgetLimit, defaultLaborAccount } = req.body;
 
     if (!code || !code.trim()) {
       return res.status(400).json({ success: false, message: 'Department code is required' });
@@ -118,13 +120,14 @@ exports.createDepartment = async (req, res, next) => {
       name: name.trim(),
       description: description?.trim() || '',
       manager: manager || null,
+      defaultLaborAccount: defaultLaborAccount || '5400',
       budgetLimit: budgetLimit || 0,
       company: companyId
     });
 
     const populatedDept = await Department.findById(department._id).populate('manager', 'name email');
 
-    res.status(201).json({ success: true, data: { ...populatedDept.toObject(), userCount: 0 } });
+    res.status(201).json({ success: true, data: { ...populatedDept.toObject(), employeeCount: 0, userCount: 0 } });
   } catch (error) {
     next(error);
   }
@@ -136,7 +139,7 @@ exports.createDepartment = async (req, res, next) => {
 exports.updateDepartment = async (req, res, next) => {
   try {
     const companyId = req.user.company._id;
-    const { code, name, description, manager, budgetLimit, isActive } = req.body;
+    const { code, name, description, manager, budgetLimit, defaultLaborAccount, isActive } = req.body;
 
     const department = await Department.findOne({ _id: req.params.id, company: companyId });
     if (!department) {
@@ -177,6 +180,11 @@ exports.updateDepartment = async (req, res, next) => {
       department.budgetLimit = budgetLimit || 0;
     }
 
+    // Update default labor account
+    if (defaultLaborAccount !== undefined) {
+      department.defaultLaborAccount = defaultLaborAccount || '5400';
+    }
+
     // Update active status
     if (isActive !== undefined) {
       department.isActive = isActive;
@@ -185,9 +193,9 @@ exports.updateDepartment = async (req, res, next) => {
     await department.save();
 
     const populatedDept = await Department.findById(department._id).populate('manager', 'name email');
-    const userCount = await User.countDocuments({ company: companyId, department: department._id });
+    const employeeCount = await Employee.countDocuments({ company: companyId, departmentRef: department._id });
 
-    res.json({ success: true, data: { ...populatedDept.toObject(), userCount } });
+    res.json({ success: true, data: { ...populatedDept.toObject(), employeeCount, userCount: employeeCount } });
   } catch (error) {
     next(error);
   }
@@ -205,10 +213,14 @@ exports.deleteDepartment = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Department not found' });
     }
 
-    // Remove department reference from all users in this department
+    // Remove department reference from all users and employees in this department
     await User.updateMany(
       { company: companyId, department: department._id },
       { $unset: { department: '' } }
+    );
+    await Employee.updateMany(
+      { company: companyId, departmentRef: department._id },
+      { $unset: { departmentRef: '', department: '' } }
     );
 
     await department.deleteOne();
@@ -267,6 +279,81 @@ exports.removeUser = async (req, res, next) => {
     );
 
     res.json({ success: true, message: 'User removed from department' });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Get employees in a department
+// @route   GET /api/departments/:id/employees
+// @access  Private
+exports.getDepartmentEmployees = async (req, res, next) => {
+  try {
+    const companyId = req.user.company._id;
+    const department = await Department.findOne({ _id: req.params.id, company: companyId });
+
+    if (!department) {
+      return res.status(404).json({ success: false, message: 'Department not found' });
+    }
+
+    const employees = await Employee.find({ company: companyId, departmentRef: department._id })
+      .select('employeeId firstName lastName email position status laborType defaultDirectPercentage')
+      .sort({ firstName: 1 });
+
+    res.json({ success: true, count: employees.length, data: employees });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Assign employees to department
+// @route   PUT /api/departments/:id/assign-employees
+// @access  Private (admin)
+exports.assignEmployees = async (req, res, next) => {
+  try {
+    const companyId = req.user.company._id;
+    const { employeeIds } = req.body;
+
+    const department = await Department.findOne({ _id: req.params.id, company: companyId });
+    if (!department) {
+      return res.status(404).json({ success: false, message: 'Department not found' });
+    }
+
+    if (!Array.isArray(employeeIds) || employeeIds.length === 0) {
+      return res.status(400).json({ success: false, message: 'Please provide employee IDs' });
+    }
+
+    await Employee.updateMany(
+      { _id: { $in: employeeIds }, company: companyId },
+      { departmentRef: department._id, department: department.name }
+    );
+
+    const employeeCount = await Employee.countDocuments({ company: companyId, departmentRef: department._id });
+
+    res.json({ success: true, message: `${employeeIds.length} employee(s) assigned to ${department.name}`, data: { ...department.toObject(), employeeCount, userCount: employeeCount } });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Remove employee from department
+// @route   PUT /api/departments/:id/remove-employee/:employeeId
+// @access  Private (admin)
+exports.removeEmployee = async (req, res, next) => {
+  try {
+    const companyId = req.user.company._id;
+    const department = await Department.findOne({ _id: req.params.id, company: companyId });
+
+    if (!department) {
+      return res.status(404).json({ success: false, message: 'Department not found' });
+    }
+
+    await Employee.updateOne(
+      { _id: req.params.employeeId, company: companyId, departmentRef: department._id },
+      { $unset: { departmentRef: '', department: '' } }
+    );
+
+    res.json({ success: true, message: 'Employee removed from department' });
   } catch (error) {
     next(error);
   }

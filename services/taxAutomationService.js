@@ -265,12 +265,12 @@ class TaxAutomationService {
       });
     }
 
-    // CR Inventory — net amount
+    // CR Purchase Returns — net amount (contra-COGS, flows to P&L)
     if (totalNet > 0) {
       result.journalLines.push({
-        accountCode: DEFAULT_ACCOUNTS.inventory,
-        accountName: 'Inventory',
-        description: 'Reversal of inventory on purchase return',
+        accountCode: DEFAULT_ACCOUNTS.purchaseReturns || '5200',
+        accountName: 'Purchase Returns',
+        description: 'Reversal of purchases on purchase return',
         debit: 0,
         credit: totalNet
       });
@@ -575,8 +575,8 @@ class TaxAutomationService {
       grossSalary = 0,
       salaryAccountId = DEFAULT_ACCOUNTS.salariesWages || '5400',
       bankAccountId = DEFAULT_ACCOUNTS.cashAtBank || '1100',
-      payeAccountId = DEFAULT_ACCOUNTS.payePayableNew || '2230',
-      rssbAccountId = DEFAULT_ACCOUNTS.rssbPayableNew || '2240',
+      payeAccountId = DEFAULT_ACCOUNTS.payePayable || '2230',
+      rssbAccountId = DEFAULT_ACCOUNTS.rssbPayable || '2240',
       employerRssbAccountId = DEFAULT_ACCOUNTS.rssbEmployerCost || '6150'
     } = payrollData;
 
@@ -737,7 +737,7 @@ class TaxAutomationService {
     return {
       journalLines: [
         {
-          accountCode: DEFAULT_ACCOUNTS.payePayableNew || '2230',
+          accountCode: DEFAULT_ACCOUNTS.payePayable || '2230',
           accountName: 'PAYE Tax Payable',
           description: 'PAYE settlement to RRA',
           debit: settledAmount,
@@ -769,7 +769,7 @@ class TaxAutomationService {
     return {
       journalLines: [
         {
-          accountCode: DEFAULT_ACCOUNTS.rssbPayableNew || '2240',
+          accountCode: DEFAULT_ACCOUNTS.rssbPayable || '2240',
           accountName: 'RSSB Payable',
           description: 'RSSB settlement',
           debit: settledAmount,

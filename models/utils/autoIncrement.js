@@ -43,6 +43,54 @@ async function generateUniqueCode(prefix, Model, companyId, fieldName) {
 }
 
 /**
+ * Generate a short sequential code like PREFIX001 (configurable digits)
+ * This is suitable for warehouse/supplier keys to avoid long timestamps.
+ */
+async function generateShortSequentialCode(prefix, Model, companyId, fieldName, digits = 3) {
+  // Match existing codes that start with the prefix followed by optional separator and digits
+  // Only consider existing codes with numeric suffix up to the given digits
+  const regex = new RegExp(`^${prefix}[-_]?([0-9]{1,${digits}})$`, 'i');
+  const docs = await Model.find({ company: companyId, [fieldName]: { $regex: regex } }).select(fieldName).lean();
+
+  let maxSeq = 0;
+  for (const d of docs) {
+    const m = String(d[fieldName] || '').match(regex);
+    if (m && m[1]) {
+      const n = parseInt(m[1], 10);
+      if (!Number.isNaN(n) && n > maxSeq) maxSeq = n;
+    }
+  }
+
+  const next = maxSeq + 1;
+  const seqStr = String(next).padStart(digits, '0');
+  return `${prefix}${seqStr}`;
+}
+
+/**
+ * Generate SKU based on prefix (derived from product name) and sequential numbering.
+ * Format: PREFIX-001 or PREFIX001 depending on includeDash
+ */
+async function generateSKU(prefix, Model, companyId, fieldName = 'sku', digits = 3, includeDash = true) {
+  const pre = String(prefix).toUpperCase();
+  const sep = includeDash ? '-' : '';
+  // Only consider SKUs that have numeric suffix up to digits to avoid large legacy numeric codes
+  const regex = new RegExp(`^${pre}${sep}?([0-9]{1,${digits}})$`, 'i');
+  const docs = await Model.find({ company: companyId, [fieldName]: { $regex: regex } }).select(fieldName).lean();
+  let maxSeq = 0;
+  for (const d of docs) {
+    const m = String(d[fieldName] || '').match(regex);
+    if (m && m[1]) {
+      const n = parseInt(m[1], 10);
+      if (!Number.isNaN(n) && n > maxSeq) maxSeq = n;
+    }
+  }
+
+  const next = maxSeq + 1;
+  const seqStr = String(next).padStart(digits, '0');
+  return `${pre}${sep}${seqStr}`;
+}
+
+/**
  * Generate a unique sequential number with year prefix
  * Uses a more robust approach with timestamp as final fallback
  * @param {string} prefix - Prefix for the number (e.g., 'INV', 'QUO', 'PO')
@@ -122,6 +170,8 @@ async function generateUniqueNumberNoYear(prefix, Model, companyId, fieldName) {
 
 module.exports = {
   generateUniqueCode,
+  generateShortSequentialCode,
+  generateSKU,
   generateUniqueNumber,
   generateUniqueNumberNoYear
 };

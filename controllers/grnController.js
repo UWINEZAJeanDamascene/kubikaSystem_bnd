@@ -8,6 +8,7 @@ const StockMovement = require("../models/StockMovement");
 const Product = require("../models/Product");
 const Supplier = require("../models/Supplier");
 const Company = require("../models/Company");
+const { generateUniqueNumber } = require('../models/utils/autoIncrement');
 const JournalService = require("../services/journalService");
 const TaxAutomationService = require("../services/taxAutomationService");
 const transactionService = require("../services/transactionService");
@@ -50,6 +51,7 @@ exports.createGRN = async (req, res, next) => {
       referenceNo,
       supplierInvoiceNo,
       receivedDate,
+      freight,
     } = req.body;
 
     const po = await PurchaseOrder.findOne({
@@ -110,15 +112,49 @@ exports.createGRN = async (req, res, next) => {
       }
     }
 
+    // Auto-generate supplier invoice number when not provided
+    let supplierInv = supplierInvoiceNo;
+    if (!supplierInv) {
+      // Use sequential supplier invoice number format e.g. SI-2026-00001
+      supplierInv = await generateUniqueNumber('SI', GoodsReceivedNote, companyId, 'supplierInvoiceNo');
+    }
+
+    // Build freight payload: pre-fill from PO estimate if not provided by frontend
+    let freightPayload = {};
+    if (freight) {
+      freightPayload = {
+        carrier: freight.carrier || (po.freight && po.freight.carrier) || '',
+        actualAmount: freight.actualAmount != null ? freight.actualAmount : (po.freight && po.freight.amount) || 0,
+        paymentMethod: freight.paymentMethod || (po.freight && po.freight.paymentMethod) || 'on_account',
+        account: freight.account || (po.freight && po.freight.account) || '5110',
+        includeInInventoryCost: freight.includeInInventoryCost != null ? freight.includeInInventoryCost : (po.freight && po.freight.includeInInventoryCost) || false,
+        allocationMethod: freight.allocationMethod || 'by_value',
+        invoiceReference: freight.invoiceReference || '',
+        invoiceDate: freight.invoiceDate ? new Date(freight.invoiceDate) : undefined,
+        paidBy: freight.paidBy || 'company',
+      };
+    } else if (po.freight && (po.freight.amount || po.freight.carrier)) {
+      freightPayload = {
+        carrier: po.freight.carrier || '',
+        actualAmount: po.freight.amount || 0,
+        paymentMethod: po.freight.paymentMethod || 'on_account',
+        account: po.freight.account || '5110',
+        includeInInventoryCost: po.freight.includeInInventoryCost || false,
+        allocationMethod: 'by_value',
+        paidBy: 'company',
+      };
+    }
+
     const grn = await GoodsReceivedNote.create({
       company: companyId,
       referenceNo,
       purchaseOrder: po._id,
       warehouse,
       supplier: po.supplier,
-      supplierInvoiceNo: supplierInvoiceNo || null,
+      supplierInvoiceNo: supplierInv,
       receivedDate: receivedDate ? new Date(receivedDate) : undefined,
       lines: enrichedLines,
+      freight: freightPayload,
       createdBy: req.user.id,
     });
 
@@ -159,6 +195,37 @@ exports.confirmGRN = async (req, res, next) => {
       throw Object.assign(new Error("PO must be approved to confirm GRN"), {
         status: 409,
       });
+
+    // ── Freight validation ───────────────────────────────────────────
+    const freight = grn.freight || {};
+    const freightAmount = Number(freight.actualAmount) || 0;
+    const includeFreightInCost = !!freight.includeInInventoryCost;
+    const freightAllocationMethod = freight.allocationMethod || 'by_value';
+
+    if (freightAmount < 0) {
+      throw Object.assign(new Error("Freight amount cannot be negative"), { status: 400 });
+    }
+
+    // Validate freight invoice reference uniqueness
+    if (freight.invoiceReference && freight.invoiceReference.trim()) {
+      const existingGRN = await GoodsReceivedNote.findOne({
+        company: companyId,
+        _id: { $ne: grn._id },
+        "freight.invoiceReference": freight.invoiceReference.trim(),
+        status: "confirmed",
+      }).session(sess || null);
+      if (existingGRN) {
+        throw Object.assign(new Error("Duplicate freight invoice reference detected"), { status: 409 });
+      }
+    }
+
+    // Compute total goods value for allocation and warning checks
+    const totalGoodsValue = grn.lines.reduce((s, l) => s + (Number(l.unitCost) * Number(l.qtyReceived)), 0);
+    const totalQtyReceived = grn.lines.reduce((s, l) => s + Number(l.qtyReceived), 0);
+
+    if (freightAmount > totalGoodsValue) {
+      console.warn(`[GRN Confirm] Freight amount (${freightAmount}) exceeds goods value (${totalGoodsValue}) for GRN ${grn.referenceNo}`);
+    }
 
     let journalLines = [];
     let vatTotal = 0;
@@ -234,6 +301,25 @@ exports.confirmGRN = async (req, res, next) => {
             { status: 400 },
           );
         }
+      }
+    }
+
+    // ── Freight allocation across lines (Scenario B) ─────────────────
+    if (freightAmount > 0 && includeFreightInCost && totalGoodsValue > 0) {
+      for (const line of grn.lines) {
+        const lineValue = Number(line.unitCost) * Number(line.qtyReceived);
+        let allocatedFreight = 0;
+        if (freightAllocationMethod === 'by_value') {
+          allocatedFreight = freightAmount * (lineValue / totalGoodsValue);
+        } else {
+          // by_quantity
+          allocatedFreight = freightAmount * (Number(line.qtyReceived) / totalQtyReceived);
+        }
+        const newUnitCost = lineValue > 0
+          ? (lineValue + allocatedFreight) / Number(line.qtyReceived)
+          : Number(line.unitCost);
+        // Update the GRN line unitCost to landed cost for downstream processing
+        line.unitCost = Math.round(newUnitCost * 1000000) / 1000000;
       }
     }
 
@@ -572,16 +658,48 @@ exports.confirmGRN = async (req, res, next) => {
       );
     }
 
-    const apAcct = await JournalService.getMappedAccountCode(
-      companyId,
-      "purchases",
-      "accountsPayable",
-      DEFAULT_ACCOUNTS.accountsPayable,
-    );
+    // ── Freight journal line (Scenario A — posted as separate COGS line) ──
+    if (freightAmount > 0 && !includeFreightInCost) {
+      const freightAcct = freight.account || DEFAULT_ACCOUNTS.freightIn || '5110';
+      journalLines.push(
+        JournalService.createDebitLine(
+          freightAcct,
+          freightAmount,
+          `Freight In for ${grn.referenceNo}${freight.carrier ? ' - ' + freight.carrier : ''}`,
+        ),
+      );
+    }
+
+    // Determine credit account based on freight payment method
+    const paymentMethod = freight.paymentMethod || 'on_account';
+    let creditAcct;
+    if (paymentMethod === 'on_account') {
+      creditAcct = await JournalService.getMappedAccountCode(
+        companyId,
+        "purchases",
+        "accountsPayable",
+        DEFAULT_ACCOUNTS.accountsPayable,
+      );
+    } else if (paymentMethod === 'cash') {
+      creditAcct = DEFAULT_ACCOUNTS.cashInHand || '1000';
+    } else if (paymentMethod === 'bank_transfer') {
+      creditAcct = DEFAULT_ACCOUNTS.cashAtBank || '1100';
+    } else if (paymentMethod === 'mobile_money') {
+      creditAcct = DEFAULT_ACCOUNTS.mtnMoMo || '1200';
+    } else {
+      creditAcct = await JournalService.getMappedAccountCode(
+        companyId,
+        "purchases",
+        "accountsPayable",
+        DEFAULT_ACCOUNTS.accountsPayable,
+      );
+    }
+
+    const creditTotal = purchaseTax.totals.gross + (freightAmount > 0 && !includeFreightInCost ? freightAmount : 0);
     journalLines.push(
       JournalService.createCreditLine(
-        apAcct,
-        purchaseTax.totals.gross,
+        creditAcct,
+        creditTotal,
         `AP for ${po.referenceNo} / ${grn.referenceNo}`,
       ),
     );
@@ -664,14 +782,16 @@ exports.confirmGRN = async (req, res, next) => {
     grn.confirmedBy = req.user.id;
     grn.confirmedAt = new Date();
 
-    // Calculate and set totalAmount from lines
+    // Calculate and set totalAmount from lines (includes freight when absorbed into unitCost)
     const grnTotal = grn.lines.reduce(
       (sum, line) =>
         sum + Number(line.qtyReceived) * Number(line.unitCost || 0),
       0,
     );
-    grn.totalAmount = grnTotal;
-    grn.balance = grnTotal;
+    // Ensure total includes freight even when not absorbed (separate line scenario)
+    const totalWithFreight = grnTotal + (includeFreightInCost ? 0 : freightAmount);
+    grn.totalAmount = totalWithFreight;
+    grn.balance = totalWithFreight;
     grn.paymentStatus = "pending";
 
     await grn.save(useSession ? { session: sess } : {});
@@ -689,12 +809,19 @@ exports.confirmGRN = async (req, res, next) => {
       console.error("Cache bump after GRN confirm failed:", e);
     }
 
-    // Send email notification for confirmed GRN
+    // Send email notification for confirmed GRN (await & log result)
     const sendEmailOnConfirm = req.body.sendEmail || false;
     if (sendEmailOnConfirm) {
-      const grnData = await GoodsReceivedNote.findById(result._id).populate('purchaseOrder');
-      const poData = await PurchaseOrder.findById(grnData.purchaseOrder);
-      sendGRNEmail(grnData, poData, companyId);
+      try {
+        const grnData = await GoodsReceivedNote.findById(result._id).populate('purchaseOrder');
+        const poData = await PurchaseOrder.findById(grnData.purchaseOrder);
+        const sent = await sendGRNEmail(grnData, poData, companyId);
+        if (!sent) {
+          console.warn(`GRN email not sent for GRN ${result._id} — sendGRNEmail returned false`);
+        }
+      } catch (emailErr) {
+        console.error('Error sending GRN confirmation email:', emailErr);
+      }
     }
 
     res.json({
@@ -748,13 +875,18 @@ exports.listGRNs = async (req, res, next) => {
 
     const total = await GoodsReceivedNote.countDocuments(query);
 
-    // Calculate totalAmount for each GRN from lines
+    // Calculate totalAmount for each GRN from lines (add freight if not absorbed)
     const grnsWithTotal = grns.map((grn) => {
-      const totalAmount = grn.lines.reduce(
+      let totalAmount = grn.lines.reduce(
         (sum, line) =>
           sum + Number(line.qtyReceived) * Number(line.unitCost || 0),
         0,
       );
+      const freightAmt = Number(grn.freight?.actualAmount) || 0;
+      const freightAbsorbed = grn.freight?.includeInInventoryCost;
+      if (freightAmt > 0 && !freightAbsorbed) {
+        totalAmount += freightAmt;
+      }
       return { ...grn, totalAmount };
     });
 
@@ -778,7 +910,7 @@ exports.updateGRN = async (req, res, next) => {
   try {
     const companyId = req.user.company._id;
     const { id } = req.params;
-    const { referenceNo, supplierInvoiceNo, receivedDate, lines } = req.body;
+    const { referenceNo, supplierInvoiceNo, receivedDate, lines, freight } = req.body;
 
     const grn = await GoodsReceivedNote.findOne({
       _id: id,
@@ -799,6 +931,12 @@ exports.updateGRN = async (req, res, next) => {
     if (referenceNo !== undefined) grn.referenceNo = referenceNo;
     if (supplierInvoiceNo !== undefined) grn.supplierInvoiceNo = supplierInvoiceNo;
     if (receivedDate !== undefined) grn.receivedDate = receivedDate;
+    if (freight !== undefined) {
+      grn.freight = {
+        ...grn.freight,
+        ...freight,
+      };
+    }
 
     if (lines && Array.isArray(lines)) {
       grn.lines = [];
@@ -883,12 +1021,18 @@ exports.getGRN = async (req, res, next) => {
       return res.status(404).json({ success: false, message: "GRN not found" });
     }
 
-    // Calculate totals from lines
-    const totalAmount = grn.lines.reduce(
+    // Calculate totals from lines (includes freight when absorbed into unitCost)
+    let totalAmount = grn.lines.reduce(
       (sum, line) =>
         sum + Number(line.qtyReceived) * Number(line.unitCost || 0),
       0,
     );
+    // Add freight for separate-line scenario (not absorbed)
+    const freightAmt = Number(grn.freight?.actualAmount) || 0;
+    const freightAbsorbed = grn.freight?.includeInInventoryCost;
+    if (freightAmt > 0 && !freightAbsorbed) {
+      totalAmount += freightAmt;
+    }
     grn.totalAmount = totalAmount;
 
     res.json({ success: true, data: grn });

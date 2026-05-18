@@ -58,8 +58,8 @@ async function getStockDiscrepancies(companyId) {
  * must equal the net VAT payable figure from journal lines.
  */
 async function getVatReconciliation(companyId) {
-  const vatOutputCodes = ['2100', '2220'];
-  const vatInputCodes = ['1500', '2210'];
+  const vatOutputCodes = ['2220'];
+  const vatInputCodes = ['2210'];
 
   // VAT Output balance (credits - debits)
   const outputAgg = await aggregateWithTimeout(JournalEntry, [
@@ -103,7 +103,7 @@ async function getVatReconciliation(companyId) {
  * total PAYE withheld minus all PAYE settlements.
  */
 async function getPayeReconciliation(companyId) {
-  const payeCodes = ['2200', '2230'];
+  const payeCodes = ['2230'];
 
   const payeAgg = await aggregateWithTimeout(JournalEntry, [
     { $match: { company: companyId, status: 'posted', reversed: { $ne: true } } },
@@ -134,7 +134,7 @@ async function getPayeReconciliation(companyId) {
  * total RSSB contributions minus all RSSB settlements.
  */
 async function getRssbReconciliation(companyId) {
-  const rssbCodes = ['2300', '2240'];
+  const rssbCodes = ['2240'];
 
   const rssbAgg = await aggregateWithTimeout(JournalEntry, [
     { $match: { company: companyId, status: 'posted', reversed: { $ne: true } } },

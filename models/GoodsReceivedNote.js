@@ -12,6 +12,20 @@ const grnLineSchema = new mongoose.Schema({
   serialNumbers: [{ type: String }]
 }, { _id: true });
 
+const { generateUniqueNumber } = require('./utils/autoIncrement');
+
+const freightDetailSchema = new mongoose.Schema({
+  carrier: { type: String, trim: true },
+  actualAmount: { type: Number, default: 0, min: 0 },
+  paymentMethod: { type: String, enum: ['cash', 'bank_transfer', 'mobile_money', 'on_account'], default: 'on_account' },
+  account: { type: String, default: '5110', trim: true },
+  includeInInventoryCost: { type: Boolean, default: false },
+  allocationMethod: { type: String, enum: ['by_value', 'by_quantity'], default: 'by_value' },
+  invoiceReference: { type: String, trim: true },
+  invoiceDate: { type: Date },
+  paidBy: { type: String, enum: ['company', 'supplier', 'third_party'], default: 'company' }
+}, { _id: false });
+
 const grnSchema = new mongoose.Schema({
   company: { type: mongoose.Schema.Types.ObjectId, ref: 'Company', required: true },
   referenceNo: { type: String, required: true, uppercase: true },
@@ -38,9 +52,23 @@ const grnSchema = new mongoose.Schema({
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   confirmedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   confirmedAt: Date,
+  freight: { type: freightDetailSchema, default: () => ({}) },
   lines: [grnLineSchema]
 }, { timestamps: true });
 
 grnSchema.index({ company: 1, referenceNo: 1 }, { unique: true });
+
+// Ensure supplierInvoiceNo is auto-generated when missing (model-level fallback)
+grnSchema.pre('validate', async function(next) {
+  try {
+    if (this.isNew && !this.supplierInvoiceNo) {
+      // Use same format as controller: SI-<YEAR>-<sequence>
+      this.supplierInvoiceNo = await generateUniqueNumber('SI', mongoose.model('GoodsReceivedNote'), this.company, 'supplierInvoiceNo');
+    }
+    next();
+  } catch (err) {
+    next(err);
+  }
+});
 
 module.exports = mongoose.model('GoodsReceivedNote', grnSchema);

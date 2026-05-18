@@ -106,6 +106,7 @@ exports.createEmployee = async (req, res, next) => {
       hireDate,
       employmentType,
       department,
+      departmentRef,
       position,
       location,
       managerId,
@@ -117,6 +118,9 @@ exports.createEmployee = async (req, res, next) => {
       rssbRegistrationNumber,
       tinNumber,
       salary,
+      laborType,
+      defaultDirectPercentage,
+      costCenter,
     } = req.body;
 
     if (!employeeId || !firstName || !lastName) {
@@ -152,6 +156,7 @@ exports.createEmployee = async (req, res, next) => {
       hireDate: hireDate || null,
       employmentType: employmentType || "full-time",
       department: department || null,
+      departmentRef: departmentRef || null,
       position: position || null,
       location: location || null,
       managerId: managerId || null,
@@ -162,6 +167,9 @@ exports.createEmployee = async (req, res, next) => {
       taxStatus: taxStatus || "resident",
       rssbRegistrationNumber: rssbRegistrationNumber || null,
       tinNumber: tinNumber || null,
+      laborType: laborType || null,
+      defaultDirectPercentage: defaultDirectPercentage !== undefined ? Number(defaultDirectPercentage) : null,
+      costCenter: costCenter || null,
       createdBy: userId,
     });
 
@@ -252,6 +260,7 @@ exports.updateEmployee = async (req, res, next) => {
       "hireDate",
       "employmentType",
       "department",
+      "departmentRef",
       "position",
       "location",
       "managerId",
@@ -262,6 +271,9 @@ exports.updateEmployee = async (req, res, next) => {
       "taxStatus",
       "rssbRegistrationNumber",
       "tinNumber",
+      "laborType",
+      "defaultDirectPercentage",
+      "costCenter",
     ];
 
     // Prevent manager self-reference

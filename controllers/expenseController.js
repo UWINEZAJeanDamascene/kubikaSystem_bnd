@@ -357,13 +357,15 @@ exports.createExpense = async (req, res, next) => {
       }
 
       // Create journal entry for expense payment
+      let journalEntry = null;
       try {
-        await JournalService.createExpenseEntry(companyId, req.user.id, {
+        journalEntry = await JournalService.createExpenseEntry(companyId, req.user.id, {
           _id: expense._id,
           description: expense.description || expense.type,
           date: expense.expenseDate || new Date(),
           amount: expense.total_amount || (expense.amount + (expense.tax_amount || 0)),
           vatAmount: expense.tax_amount || 0,
+          withholdingTax: expense.withholdingTax || 0,
           category: expense.type,
           paymentMethod: normalizedPaymentMethod,
           bankAccountCode: bankAccountCode,
@@ -377,13 +379,11 @@ exports.createExpense = async (req, res, next) => {
       }
 
       // Create Bank Transaction using addTransaction() so cachedBalance is correctly reduced
-      console.log('[createExpense] Checking bank transaction - bankAccount:', !!bankAccount, 'paymentMethod:', normalizedPaymentMethod, 'includes:', bankPaymentMethods.includes(normalizedPaymentMethod));
       if (bankAccount && bankPaymentMethods.includes(normalizedPaymentMethod)) {
-        console.log('[createExpense] Creating bank transaction for expense:', expense._id);
         try {
           await bankAccount.addTransaction({
             type: "withdrawal",
-            amount: expense.total_amount || (expense.amount + (expense.tax_amount || 0)),
+            amount: (expense.total_amount || (expense.amount + (expense.tax_amount || 0))) - (expense.withholdingTax || 0),
             description: `Expense paid: ${expense.description || expense.type}`,
             date: expense.expenseDate || new Date(),
             referenceNumber: expense.reference || "",
@@ -393,6 +393,7 @@ exports.createExpense = async (req, res, next) => {
             referenceType: "Expense",
             createdBy: req.user._id,
             notes: `Payment for expense: ${expense.description || expense.type}`,
+            journalEntryId: journalEntry?._id || null,
           });
         } catch (bankError) {
           console.error(
@@ -505,12 +506,13 @@ exports.updateExpense = async (req, res, next) => {
     let journalEntry = null;
     if (isBeingPaid) {
       try {
-        await JournalService.createExpenseEntry(companyId, req.user.id, {
+        journalEntry = await JournalService.createExpenseEntry(companyId, req.user.id, {
           _id: expense._id,
           description: expense.description || expense.type,
           date: expense.expenseDate || new Date(),
           amount: expense.total_amount || (expense.amount + (expense.tax_amount || 0)),
           vatAmount: expense.tax_amount || 0,
+          withholdingTax: expense.withholdingTax || 0,
           category: expense.type,
           paymentMethod: paymentMethod,
           bankAccountCode: bankAccountCode,
@@ -534,10 +536,11 @@ exports.updateExpense = async (req, res, next) => {
     ) {
       try {
         const totalAmount = expense.total_amount || (expense.amount + (expense.tax_amount || 0));
+        const netPaid = totalAmount - (expense.withholdingTax || 0);
         // Use addTransaction which properly handles cachedBalance
         const transaction = await bankAccount.addTransaction({
           type: "withdrawal",
-          amount: totalAmount,
+          amount: netPaid,
           description: `Expense paid: ${expense.description || expense.type}`,
           date: new Date(),
           referenceNumber: expense.reference || "",
@@ -547,6 +550,7 @@ exports.updateExpense = async (req, res, next) => {
           referenceType: "Expense",
           createdBy: req.user._id,
           notes: `Payment for expense: ${expense.description || expense.type}`,
+          journalEntryId: journalEntry?._id || null,
         });
 
         bankTransaction = transaction;
@@ -1063,6 +1067,7 @@ exports.postExpense = async (req, res, next) => {
         date: expense.expenseDate || new Date(),
         amount: expense.total_amount || (expense.amount + (expense.tax_amount || 0)),
         vatAmount: expense.tax_amount || 0,
+        withholdingTax: expense.withholdingTax || 0,
         category: expense.type,
         paymentMethod: expense.payment_method,
         bankAccountCode: bankAccountCode,
@@ -1079,10 +1084,11 @@ exports.postExpense = async (req, res, next) => {
     if (bankAccount && bankPaymentMethods.includes(expense.payment_method)) {
       try {
         const totalAmount = expense.total_amount || (expense.amount + (expense.tax_amount || 0));
+        const netPaid = totalAmount - (expense.withholdingTax || 0);
         // Use addTransaction which properly handles cachedBalance
         await bankAccount.addTransaction({
           type: "withdrawal",
-          amount: totalAmount,
+          amount: netPaid,
           description: `Expense paid: ${expense.description || expense.type}`,
           date: new Date(),
           referenceNumber: expense.reference || "",

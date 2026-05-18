@@ -70,13 +70,6 @@ const CHART_OF_ACCOUNTS = {
     normalBalance: "debit",
     allowDirectPosting: true,
   },
-  1500: {
-    name: "VAT Receivable (legacy)",
-    type: "asset",
-    subtype: "vat_input",
-    normalBalance: "debit",
-    allowDirectPosting: true,
-  },
   1600: {
     name: "Prepaid Expenses",
     type: "asset",
@@ -209,6 +202,13 @@ const CHART_OF_ACCOUNTS = {
     normalBalance: "debit",
     allowDirectPosting: true,
   },
+  2220: {
+    name: "VAT Output",
+    type: "liability",
+    subtype: "vat_output",
+    normalBalance: "credit",
+    allowDirectPosting: true,
+  },
 
   // ── LIABILITIES (2000-2999) ───
   // Current Liabilities
@@ -216,28 +216,6 @@ const CHART_OF_ACCOUNTS = {
     name: "Accounts Payable",
     type: "liability",
     subtype: "current",
-    normalBalance: "credit",
-    allowDirectPosting: true,
-  },
-  2100: {
-    name: "VAT Payable (legacy)",
-    type: "liability",
-    subtype: "vat_output",
-    normalBalance: "credit",
-    allowDirectPosting: true,
-  },
-  2200: {
-    name: "PAYE Payable (legacy)",
-    type: "liability",
-    subtype: "paye_payable",
-    normalBalance: "credit",
-    allowDirectPosting: true,
-  },
-  
-  2220: {
-    name: "VAT Output",
-    type: "liability",
-    subtype: "vat_output",
     normalBalance: "credit",
     allowDirectPosting: true,
   },
@@ -250,13 +228,6 @@ const CHART_OF_ACCOUNTS = {
   },
   2240: {
     name: "RSSB Payable",
-    type: "liability",
-    subtype: "rssb_payable",
-    normalBalance: "credit",
-    allowDirectPosting: true,
-  },
-  2300: {
-    name: "RSSB Payable (legacy)",
     type: "liability",
     subtype: "rssb_payable",
     normalBalance: "credit",
@@ -304,7 +275,6 @@ const CHART_OF_ACCOUNTS = {
     normalBalance: "credit",
     allowDirectPosting: true,
   },
-  // Deferred Revenue — advance customer payments (IFRS 15 contract liability)
   2850: {
     name: "Deferred Revenue",
     type: "liability",
@@ -388,13 +358,6 @@ const CHART_OF_ACCOUNTS = {
     normalBalance: "credit",
     allowDirectPosting: true,
   },
-  4300: {
-    name: "Interest Income",
-    type: "revenue",
-    subtype: "non_operating",
-    normalBalance: "credit",
-    allowDirectPosting: true,
-  },
   4250: {
     name: "Gain on Asset Disposal",
     type: "revenue",
@@ -402,12 +365,12 @@ const CHART_OF_ACCOUNTS = {
     normalBalance: "credit",
     allowDirectPosting: true,
   },
-  4400: {
-    name: "Gain on Asset Disposal (legacy)",
+  4300: {
+    name: "Interest Income",
     type: "revenue",
     subtype: "non_operating",
     normalBalance: "credit",
-    allowDirectPosting: false,
+    allowDirectPosting: true,
   },
 
   // ── COST OF GOODS SOLD (5000-5099) ────────
@@ -535,7 +498,7 @@ const CHART_OF_ACCOUNTS = {
   5910: {
     name: "Miscellaneous Expenses",
     type: "expense",
-    subtype: "other_expense",
+    subtype: "operating",
     normalBalance: "debit",
     allowDirectPosting: true,
   },
@@ -567,29 +530,6 @@ const CHART_OF_ACCOUNTS = {
     normalBalance: "debit",
     allowDirectPosting: true,
   },
-  6300: {
-    name: "Bad Debt Expense (legacy)",
-    type: "expense",
-    subtype: "operating",
-    normalBalance: "debit",
-    allowDirectPosting: false,
-  },
-  6400: {
-    name: "Corporate Tax",
-    type: "expense",
-    subtype: "tax",
-    normalBalance: "debit",
-    allowDirectPosting: true,
-  },
-  6500: {
-    name: "Loss on Asset Disposal (legacy)",
-    type: "expense",
-    subtype: "non_operating",
-    normalBalance: "debit",
-    allowDirectPosting: false,
-  },
-
-  // Additional operating expense codes requested
   5250: {
     name: "Bad Debt Expense",
     type: "expense",
@@ -613,11 +553,11 @@ const CHART_OF_ACCOUNTS = {
     allowDirectPosting: true,
   },
 
-  // ── SPECIAL / CLEARING ACCOUNTS ───────────────────────────────────
+  // ── EXPENSE ACCOUNTS ────────────────────────────────────────────
   7100: {
     name: "Stock Adjustment",
-    type: "asset",
-    subtype: "current",
+    type: "expense",
+    subtype: "operating",
     normalBalance: "debit",
     allowDirectPosting: true,
   },
@@ -737,16 +677,12 @@ const DEFAULT_ACCOUNTS = {
   employeeAdvances: "1250",
   otherReceivables: "1350",
 
-  // VAT (legacy - mapped to old accounts for backward compatibility)
-  vatReceivable: "1500",
-  vatPayable: "2100",
-  taxPayable: "2100",
-
-  // VAT (new separated accounts)
+  // VAT
   vatInput: "2210",
   vatOutput: "2220",
 
   // Expenses
+  directLabor: "5300",
   salaries: "5400",
   salariesWages: "5400",
   payrollExpenses: "5410",
@@ -759,7 +695,6 @@ const DEFAULT_ACCOUNTS = {
   otherExpenses: "6100",
   bankCharges: "6200",
   badDebt: "5250",
-  badDebtLegacy: "6300",
   officeSupplies: "5610",
   travelAndTransport: "5650",
   repairsAndMaintenance: "5710",
@@ -795,10 +730,8 @@ const DEFAULT_ACCOUNTS = {
 
   // Tax
   incomeTaxPayable: "2400",
-  payePayable: "2200",
-  payePayableNew: "2230",
-  rssbPayable: "2300",
-  rssbPayableNew: "2240",
+  payePayable: "2230",
+  rssbPayable: "2240",
   withholdingTaxPayable: "2500",
   corporateTax: "6400",
   withholdingTaxExpense: "6150",
@@ -817,7 +750,7 @@ const DEFAULT_ACCOUNTS = {
   serviceRevenue: "4050",
   interestIncome: "4300",
   gainOnDisposal: "4250",
-  lossOnDisposal: "6500",
+  lossOnDisposal: "6050",
   deferredRevenue: "2850",
 
   // COGS / adjustments
