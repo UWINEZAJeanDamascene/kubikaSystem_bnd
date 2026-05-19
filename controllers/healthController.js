@@ -21,6 +21,8 @@ exports.systemHealth = async (req, res) => {
       database: { status: 'error', ping_ms: 0 },
       memory: { heap_used_mb: 0, heap_total_mb: 0, rss_mb: 0, status: 'ok' },
       cache: { status: 'ok' },
+      memory_trend: null,
+      metrics: null,
     });
   }
 };
@@ -39,4 +41,42 @@ exports.accountingHealth = async (req, res, next) => {
   } catch (err) {
     next(err);
   }
+};
+
+// POST /api/health/gc — hint to run GC if exposed; returns guidance either way
+exports.gcHint = async (req, res) => {
+  const before = process.memoryUsage();
+  let gcRan = false;
+  let message = '';
+
+  if (global.gc && typeof global.gc === 'function') {
+    try {
+      global.gc();
+      gcRan = true;
+      message = 'Garbage collection executed successfully.';
+    } catch (e) {
+      message = `GC invocation failed: ${e.message}`;
+    }
+  } else {
+    message = 'Manual GC is not exposed. Start Node.js with --expose-gc flag to enable this feature.';
+  }
+
+  const after = process.memoryUsage();
+  const freed = Math.round(((before.heapUsed - after.heapUsed) / 1024 / 1024) * 100) / 100;
+
+  res.json({
+    gc_ran: gcRan,
+    message,
+    heap_freed_mb: freed > 0 ? freed : 0,
+    before: {
+      heap_used_mb: Math.round((before.heapUsed / 1024 / 1024) * 100) / 100,
+      heap_total_mb: Math.round((before.heapTotal / 1024 / 1024) * 100) / 100,
+      rss_mb: Math.round((before.rss / 1024 / 1024) * 100) / 100,
+    },
+    after: {
+      heap_used_mb: Math.round((after.heapUsed / 1024 / 1024) * 100) / 100,
+      heap_total_mb: Math.round((after.heapTotal / 1024 / 1024) * 100) / 100,
+      rss_mb: Math.round((after.rss / 1024 / 1024) * 100) / 100,
+    },
+  });
 };

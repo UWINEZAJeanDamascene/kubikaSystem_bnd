@@ -121,9 +121,10 @@ async function initializeServer() {
   const healthController = require('./controllers/healthController');
   const { protect } = require('./middleware/auth');
   const requireCompanyHeader = require('./middleware/requireCompanyHeader');
-  app.get('/api/health', healthController.systemHealth);
-  app.get('/health', healthController.systemHealth);
+  app.get('/api/health', cors(), healthController.systemHealth);
+  app.get('/health', cors(), healthController.systemHealth);
   app.get('/api/health/accounting', protect, requireCompanyHeader, healthController.accountingHealth);
+  app.post('/api/health/gc', cors(), healthController.gcHint);
 
   // Rate limiting with Redis (distributed)
   const rateLimiters = createRateLimiters();
@@ -198,6 +199,10 @@ async function initializeServer() {
 
   // HTTP Parameter Pollution — last duplicate query key wins (single scalar)
   app.use(hpp());
+
+  // Request timing tracker (rolling samples for health dashboard)
+  const requestTiming = require('./middleware/requestTiming');
+  app.use(requestTiming);
 
   // Input sanitisation — strip dangerous chars (after body parsed)
   const sanitizeInput = require('./middleware/sanitizeInput');

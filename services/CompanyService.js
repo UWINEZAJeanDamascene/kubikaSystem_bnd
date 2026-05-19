@@ -502,12 +502,87 @@ class CompanyService {
     const sent = await emailService.sendEmail(
       company.email,
       subject,
-      `<div style="font-family:Arial,sans-serif;max-width:620px;margin:0 auto;padding:24px;">
-        <h2 style="color:#0f172a;">${escapeHtml(subject)}</h2>
-        <p>${escapeHtml(message)}</p>
-        <p><strong>Company:</strong> ${escapeHtml(company.name)}</p>
-        ${company.next_billing_date ? `<p><strong>Next payment:</strong> ${new Date(company.next_billing_date).toLocaleDateString()}</p>` : ''}
-      </div>`
+      `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${escapeHtml(subject)}</title>
+</head>
+<body style="margin:0;padding:0;background-color:#f1f5f9;font-family:'Segoe UI',Arial,sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+    <tr>
+      <td align="center" style="padding:32px 16px;">
+        <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;border-radius:16px;overflow:hidden;background:#ffffff;box-shadow:0 4px 24px rgba(15,23,42,0.08);">
+          <!-- Header -->
+          <tr>
+            <td style="background:linear-gradient(135deg,#4f46e5 0%,#7c3aed 100%);padding:32px 40px;text-align:center;">
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 auto;">
+                <tr>
+                  <td style="width:44px;height:44px;border-radius:10px;background:rgba(255,255,255,0.15);text-align:center;vertical-align:middle;">
+                    <span style="color:#ffffff;font-size:22px;line-height:44px;">&#9670;</span>
+                  </td>
+                  <td style="padding-left:12px;vertical-align:middle;">
+                    <p style="margin:0;color:#ffffff;font-size:18px;font-weight:700;letter-spacing:-0.3px;">StockManager</p>
+                    <p style="margin:2px 0 0;color:rgba(255,255,255,0.75);font-size:11px;font-weight:500;letter-spacing:0.5px;text-transform:uppercase;">Platform Communication</p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <!-- Body -->
+          <tr>
+            <td style="padding:40px 40px 32px;">
+              <h1 style="margin:0 0 20px;color:#0f172a;font-size:22px;font-weight:700;line-height:1.3;">${escapeHtml(subject)}</h1>
+              <p style="margin:0 0 16px;color:#334155;font-size:15px;line-height:1.7;">${escapeHtml(message).replace(/\n/g, '<br>')}</p>
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:20px 0;width:100%;border-radius:10px;background:#f8fafc;">
+                <tr>
+                  <td style="padding:16px 20px;">
+                    <p style="margin:0 0 4px;color:#64748b;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">Company</p>
+                    <p style="margin:0;color:#0f172a;font-size:15px;font-weight:700;">${escapeHtml(company.name)}</p>
+                  </td>
+                </tr>
+                ${company.next_billing_date ? `<tr><td style="padding:0 20px 16px;"><p style="margin:0 0 4px;color:#64748b;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">Next Payment</p><p style="margin:0;color:#0f172a;font-size:15px;font-weight:700;">${new Date(company.next_billing_date).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p></td></tr>` : ''}
+              </table>
+            </td>
+          </tr>
+          <!-- CTA -->
+          <tr>
+            <td style="padding:0 40px 40px;">
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td style="border-radius:8px;background:linear-gradient(135deg,#4f46e5 0%,#7c3aed 100%);text-align:center;">
+                    <a href="https://app.stockmanager.rw/dashboard" style="display:inline-block;padding:12px 28px;color:#ffffff;font-size:13px;font-weight:600;text-decoration:none;border-radius:8px;">Go to Dashboard</a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <!-- Divider -->
+          <tr>
+            <td style="padding:0 40px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr><td style="border-top:1px solid #e2e8f0;font-size:0;line-height:0;">&nbsp;</td></tr>
+              </table>
+            </td>
+          </tr>
+          <!-- Footer -->
+          <tr>
+            <td style="padding:24px 40px 32px;text-align:center;">
+              <p style="margin:0 0 8px;color:#94a3b8;font-size:12px;line-height:1.6;">
+                You are receiving this because you are a registered tenant on StockManager.
+              </p>
+              <p style="margin:0;color:#94a3b8;font-size:11px;line-height:1.6;">
+                &copy; ${new Date().getFullYear()} StockManager Rwanda. All rights reserved.
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`
     );
 
     company.last_payment_reminder_at = new Date();
@@ -535,10 +610,78 @@ class CompanyService {
     const message = payload.message || 'We have an update to share about your StockManager platform.';
     const emailService = require('./emailService');
 
-    const html = `<div style="font-family:Arial,sans-serif;max-width:620px;margin:0 auto;padding:24px;">
-      <h2 style="color:#0f172a;">${escapeHtml(subject)}</h2>
-      <p>${escapeHtml(message)}</p>
-    </div>`;
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${escapeHtml(subject)}</title>
+</head>
+<body style="margin:0;padding:0;background-color:#f1f5f9;font-family:'Segoe UI',Arial,sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+    <tr>
+      <td align="center" style="padding:32px 16px;">
+        <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;border-radius:16px;overflow:hidden;background:#ffffff;box-shadow:0 4px 24px rgba(15,23,42,0.08);">
+          <!-- Header -->
+          <tr>
+            <td style="background:linear-gradient(135deg,#4f46e5 0%,#7c3aed 100%);padding:32px 40px;text-align:center;">
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 auto;">
+                <tr>
+                  <td style="width:44px;height:44px;border-radius:10px;background:rgba(255,255,255,0.15);text-align:center;vertical-align:middle;">
+                    <span style="color:#ffffff;font-size:22px;line-height:44px;">&#9670;</span>
+                  </td>
+                  <td style="padding-left:12px;vertical-align:middle;">
+                    <p style="margin:0;color:#ffffff;font-size:18px;font-weight:700;letter-spacing:-0.3px;">StockManager</p>
+                    <p style="margin:2px 0 0;color:rgba(255,255,255,0.75);font-size:11px;font-weight:500;letter-spacing:0.5px;text-transform:uppercase;">Platform Communication</p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <!-- Body -->
+          <tr>
+            <td style="padding:40px 40px 32px;">
+              <h1 style="margin:0 0 20px;color:#0f172a;font-size:22px;font-weight:700;line-height:1.3;">${escapeHtml(subject)}</h1>
+              <p style="margin:0 0 16px;color:#334155;font-size:15px;line-height:1.7;">${escapeHtml(message).replace(/\n/g, '<br>')}</p>
+            </td>
+          </tr>
+          <!-- CTA -->
+          <tr>
+            <td style="padding:0 40px 40px;">
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td style="border-radius:8px;background:linear-gradient(135deg,#4f46e5 0%,#7c3aed 100%);text-align:center;">
+                    <a href="https://app.stockmanager.rw/dashboard" style="display:inline-block;padding:12px 28px;color:#ffffff;font-size:13px;font-weight:600;text-decoration:none;border-radius:8px;">Go to Dashboard</a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <!-- Divider -->
+          <tr>
+            <td style="padding:0 40px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr><td style="border-top:1px solid #e2e8f0;font-size:0;line-height:0;">&nbsp;</td></tr>
+              </table>
+            </td>
+          </tr>
+          <!-- Footer -->
+          <tr>
+            <td style="padding:24px 40px 32px;text-align:center;">
+              <p style="margin:0 0 8px;color:#94a3b8;font-size:12px;line-height:1.6;">
+                You are receiving this because you are a registered tenant on StockManager.
+              </p>
+              <p style="margin:0;color:#94a3b8;font-size:11px;line-height:1.6;">
+                &copy; ${new Date().getFullYear()} StockManager Rwanda. All rights reserved.
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
 
     // Send individually to protect recipient privacy
     let sentCount = 0;

@@ -57,6 +57,7 @@ router.get('/platform-dashboard', authorize('platform_admin'), companyController
 router.get('/platform-analytics', authorize('platform_admin'), companyController.getPlatformAnalytics);
 router.post('/platform-broadcast', authorize('platform_admin'), companyController.broadcastPlatformUpdate);
 router.get('/platform-audit-logs', authorize('platform_admin'), companyController.getPlatformAuditLogs);
+router.get('/platform-security-stats', authorize('platform_admin'), companyController.getPlatformSecurityStats);
 router.get('/subscription-plans', authorize('platform_admin'), companyController.getSubscriptionPlans);
 router.post('/subscription-plans', authorize('platform_admin'), companyController.createSubscriptionPlan);
 router.put('/subscription-plans/:key', authorize('platform_admin'), companyController.updateSubscriptionPlan);

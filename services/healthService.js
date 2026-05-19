@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const { redisClient, isRedisConfigured } = require('../config/redis');
+const { buildAdvancedMetrics } = require('./systemMetricsService');
 
 const API_VERSION = process.env.API_VERSION || 'v1';
 
@@ -10,6 +11,63 @@ function memoryStatusFromRatio(ratio) {
   if (ratio >= 0.95) return 'critical';
   if (ratio >= 0.85) return 'warning';
   return 'ok';
+}
+
+// ── Memory growth tracking ────────────────────────────────────────────────
+const memoryHistory = []; // { timestamp, heap_used_mb, heap_total_mb }
+const MAX_HISTORY = 60;   // Keep last 60 snapshots (~30 min at 30s interval)
+const GROWTH_ALERT_MB = 50; // Log warning if heap grows >50MB between checks
+
+function recordMemoryGrowth(memory) {
+  const entry = {
+    timestamp: Date.now(),
+    heap_used_mb: memory.heap_used_mb,
+    heap_total_mb: memory.heap_total_mb,
+  };
+  memoryHistory.push(entry);
+  if (memoryHistory.length > MAX_HISTORY) memoryHistory.shift();
+
+  // Detect sustained growth trend (last 3 readings vs previous 3)
+  if (memoryHistory.length >= 6) {
+    const recent = memoryHistory.slice(-3);
+    const prior = memoryHistory.slice(-6, -3);
+    const recentAvg = recent.reduce((s, e) => s + e.heap_used_mb, 0) / recent.length;
+    const priorAvg = prior.reduce((s, e) => s + e.heap_used_mb, 0) / prior.length;
+    const growth = recentAvg - priorAvg;
+    if (growth > GROWTH_ALERT_MB) {
+      console.warn(
+        `[HEALTH] Heap growth detected: +${growth.toFixed(1)}MB over last ~90s ` +
+        `(recent avg ${recentAvg.toFixed(1)}MB, prior avg ${priorAvg.toFixed(1)}MB). ` +
+        `Current: ${memory.heap_used_mb.toFixed(1)}MB / ${memory.heap_total_mb.toFixed(1)}MB ` +
+        `(${Math.round((memory.heap_used_mb / memory.heap_total_mb) * 100)}%)`
+      );
+    }
+  }
+
+  // Log critical memory state
+  if (memory.status === 'critical') {
+    console.error(
+      `[HEALTH] CRITICAL memory: ${memory.heap_used_mb.toFixed(1)}MB used / ` +
+      `${memory.heap_total_mb.toFixed(1)}MB total (${Math.round((memory.heap_used_mb / memory.heap_total_mb) * 100)}%). ` +
+      `RSS: ${memory.rss_mb.toFixed(1)}MB. ` +
+      `Recommend: restart process or enable --max-old-space-size with leak investigation.`
+    );
+  }
+}
+
+function getMemoryTrend() {
+  if (memoryHistory.length < 2) return null;
+  const first = memoryHistory[0];
+  const last = memoryHistory[memoryHistory.length - 1];
+  const durationSec = Math.round((last.timestamp - first.timestamp) / 1000);
+  const growth = last.heap_used_mb - first.heap_used_mb;
+  const rate = durationSec > 0 ? (growth / durationSec) * 60 : 0; // MB/min
+  return {
+    duration_sec: durationSec,
+    growth_mb: Math.round(growth * 100) / 100,
+    rate_mb_per_min: Math.round(rate * 100) / 100,
+    readings: memoryHistory.length,
+  };
 }
 
 function buildMemorySnapshot(usage = process.memoryUsage()) {
@@ -95,7 +153,16 @@ async function buildSystemHealthSnapshot(deps = {}) {
   const memory = deps.buildMemorySnapshot
     ? deps.buildMemorySnapshot(memoryUsage())
     : module.exports.buildMemorySnapshot(memoryUsage());
+  recordMemoryGrowth(memory);
   const overall = computeOverallStatus({ database, memory, cache });
+
+  // Gather advanced metrics in parallel (don't fail health check if they error)
+  let advanced = null;
+  try {
+    advanced = await buildAdvancedMetrics(memory);
+  } catch (e) {
+    console.warn('[HEALTH] Advanced metrics failed:', e.message);
+  }
 
   return {
     status: overall,
@@ -105,7 +172,9 @@ async function buildSystemHealthSnapshot(deps = {}) {
     database,
     memory,
     cache,
+    memory_trend: getMemoryTrend(),
     httpStatus: httpStatusForOverall(overall),
+    metrics: advanced,
   };
 }
 
@@ -117,4 +186,6 @@ module.exports = {
   computeOverallStatus,
   memoryStatusFromRatio,
   httpStatusForOverall,
+  getMemoryTrend,
+  recordMemoryGrowth,
 };

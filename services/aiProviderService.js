@@ -234,15 +234,28 @@ function getProviders() {
   return createProviders().filter((p) => isProviderHealthy(p.name));
 }
 
-// ─── Simple in-memory cache (LRU with TTL) ────────────────────────────────
+// ─── Simple in-memory cache (LRU with TTL + max size cap) ─────────────────
 const memoryCache = new Map();
+const MAX_MEMORY_CACHE_SIZE = 500; // Hard cap to prevent unbounded growth
 
-function cleanupMemoryCache() {
+function cleanupMemoryCache(force = false) {
   const now = Date.now();
+  // Phase 1: remove expired entries
   for (const [key, entry] of memoryCache) {
     if (entry.expires < now) memoryCache.delete(key);
   }
+  // Phase 2: if still over max, evict oldest (LRU-like via insertion order)
+  if (force || memoryCache.size > MAX_MEMORY_CACHE_SIZE) {
+    const overage = memoryCache.size - MAX_MEMORY_CACHE_SIZE;
+    const keysToDelete = Array.from(memoryCache.keys()).slice(0, Math.max(0, overage + 50));
+    for (const key of keysToDelete) memoryCache.delete(key);
+  }
 }
+
+// Periodic cleanup every 5 minutes to prevent stale accumulation
+const cacheCleanupTimer = setInterval(() => cleanupMemoryCache(true), 5 * 60 * 1000);
+// Ensure timer doesn't keep process alive in test environments
+cacheCleanupTimer.unref && cacheCleanupTimer.unref();
 
 // ─── Cache helpers ──────────────────────────────────────────────────────────
 function makeCacheKey(systemPrompt, messages) {

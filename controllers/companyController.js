@@ -864,6 +864,142 @@ exports.recordOwnerCapital = async (req, res) => {
   }
 };
 
+/** GET /api/companies/platform-security-stats — platform_admin */
+exports.getPlatformSecurityStats = async (req, res) => {
+  try {
+    const User = require('../models/User');
+    const ActionLog = require('../models/ActionLog');
+    const AuditLog = require('../models/AuditLog');
+    const IPWhitelist = require('../models/IPWhitelist');
+
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const weekStart = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+    const [
+      totalUsers,
+      activeUsers,
+      lockedUsers,
+      twoFAUsers,
+      totalActionLogs,
+      todayLogins,
+      todayFailedLogins,
+      weekFailedLogins,
+      totalAuditLogs,
+      auditByEntity,
+      auditByStatus,
+      recentAuditLogs,
+      ipEntries,
+      recentFailedLogins,
+      userActivityTrend
+    ] = await Promise.all([
+      User.countDocuments(),
+      User.countDocuments({ isActive: true }),
+      User.countDocuments({ locked_until: { $gte: now } }),
+      User.countDocuments({ twoFAEnabled: true }),
+      ActionLog.countDocuments(),
+      ActionLog.countDocuments({ action: 'login', createdAt: { $gte: todayStart } }),
+      ActionLog.countDocuments({ action: 'login_failed', createdAt: { $gte: todayStart } }),
+      ActionLog.countDocuments({ action: 'login_failed', createdAt: { $gte: weekStart } }),
+      AuditLog.countDocuments(),
+      AuditLog.aggregate([
+        { $group: { _id: '$entity_type', count: { $sum: 1 } } },
+        { $sort: { count: -1 } },
+        { $limit: 10 }
+      ]),
+      AuditLog.aggregate([
+        { $group: { _id: '$status', count: { $sum: 1 } } }
+      ]),
+      AuditLog.find()
+        .sort({ createdAt: -1 })
+        .limit(20)
+        .populate('user_id', 'name email')
+        .populate('company_id', 'name code')
+        .lean(),
+      IPWhitelist.countDocuments(),
+      ActionLog.find({ action: 'login_failed' })
+        .sort({ createdAt: -1 })
+        .limit(10)
+        .populate('user', 'name email')
+        .lean(),
+      // Daily activity trend for last 7 days
+      ActionLog.aggregate([
+        { $match: { createdAt: { $gte: weekStart } } },
+        {
+          $group: {
+            _id: {
+              year: { $year: '$createdAt' },
+              month: { $month: '$createdAt' },
+              day: { $dayOfMonth: '$createdAt' }
+            },
+            count: { $sum: 1 },
+            failed: { $sum: { $cond: [{ $eq: ['$status', 'failed'] }, 1, 0] } }
+          }
+        },
+        { $sort: { '_id.year': 1, '_id.month': 1, '_id.day': 1 } }
+      ])
+    ]);
+
+    const failedLoginRate = todayLogins + todayFailedLogins > 0
+      ? Math.round((todayFailedLogins / (todayLogins + todayFailedLogins)) * 100)
+      : 0;
+
+    const twoFARate = totalUsers > 0 ? Math.round((twoFAUsers / totalUsers) * 100) : 0;
+
+    res.json({
+      success: true,
+      data: {
+        users: {
+          total: totalUsers,
+          active: activeUsers,
+          locked: lockedUsers,
+          twoFAEnabled: twoFAUsers,
+          twoFARate,
+          inactive: totalUsers - activeUsers
+        },
+        logins: {
+          todayTotal: todayLogins + todayFailedLogins,
+          todaySuccess: todayLogins,
+          todayFailed: todayFailedLogins,
+          weekFailed: weekFailedLogins,
+          failedRate: failedLoginRate
+        },
+        audit: {
+          total: totalAuditLogs,
+          actionLogs: totalActionLogs,
+          byEntity: auditByEntity,
+          byStatus: auditByStatus
+        },
+        ipWhitelist: { total: ipEntries },
+        recentEvents: recentAuditLogs.map(log => ({
+          _id: log._id,
+          action: log.action,
+          entity_type: log.entity_type,
+          status: log.status,
+          user: log.user_id ? { name: log.user_id.name || log.user_id.email, email: log.user_id.email } : null,
+          company: log.company_id ? { name: log.company_id.name, code: log.company_id.code } : null,
+          ip_address: log.ip_address,
+          createdAt: log.createdAt
+        })),
+        recentFailedLogins: recentFailedLogins.map(l => ({
+          _id: l._id,
+          user: l.user ? { name: l.user.name, email: l.user.email } : null,
+          ipAddress: l.ipAddress,
+          createdAt: l.createdAt
+        })),
+        activityTrend: userActivityTrend.map(d => ({
+          date: `${d._id.year}-${String(d._id.month).padStart(2, '0')}-${String(d._id.day).padStart(2, '0')}`,
+          total: d.count,
+          failed: d.failed
+        }))
+      }
+    });
+  } catch (error) {
+    console.error('getPlatformSecurityStats error:', error);
+    res.status(500).json({ success: false, message: error.message || 'Failed to load security stats' });
+  }
+};
+
 /** GET /api/companies/capital/balance */
 exports.getCapitalBalance = async (req, res) => {
   try {

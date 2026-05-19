@@ -161,22 +161,43 @@ const generateSnapshotForPeriod = async (companyId, periodType) => {
   return generateAllReports(companyId, periodType, targetYear, targetPeriodNumber);
 };
 
+// ── Timer management (prevent leaks on hot reload / restart) ──
+let schedulerTimers = [];
+let schedulerStarted = false;
+
+function registerSchedulerTimer(timer) {
+  schedulerTimers.push(timer);
+  return timer;
+}
+
+function clearSchedulerTimers() {
+  for (const t of schedulerTimers) {
+    if (typeof t === 'number') {
+      clearTimeout(t);
+      clearInterval(t);
+    }
+  }
+  schedulerTimers = [];
+}
+
 // Initialize scheduler (sets up cron jobs)
 const initializeScheduler = (app) => {
+  if (schedulerStarted) {
+    console.log('Report scheduler already initialized, skipping duplicate');
+    return;
+  }
+  schedulerStarted = true;
   console.log('Initializing report scheduler...');
 
-  // For now, we'll use a simple interval-based approach
-  // In production, use node-cron or similar
-
   // Run immediately on startup (for demo)
-  setTimeout(async () => {
+  registerSchedulerTimer(setTimeout(async () => {
     console.log('Running initial snapshot generation...');
     await runScheduledTasks();
-  }, 10000); // Wait 10 seconds after startup
+  }, 10000)); // Wait 10 seconds after startup
 
   // Set up periodic runs
   // Daily check at midnight
-  setInterval(async () => {
+  registerSchedulerTimer(setInterval(async () => {
     const now = new Date();
     const dayOfWeek = now.getDay();
     const date = now.getDate();
@@ -236,7 +257,7 @@ const initializeScheduler = (app) => {
         await cleanOldSnapshots(company._id);
       }
     }
-  }, 60000); // Check every minute
+  }, 60000)); // Check every minute
 
   console.log('Report scheduler initialized');
 };

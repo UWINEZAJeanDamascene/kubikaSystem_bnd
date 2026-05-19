@@ -21,8 +21,32 @@ const AUTO_BACKUP_ENABLED = process.env.AUTO_BACKUP_ENABLED === 'true';
 
 class BackupScheduler {
   constructor() {
+    this.timers = [];       // Track ALL timers to prevent leaks
     this.backupTimer = null;
     this.isRunning = false;
+    this.started = false;   // Guard against double-start
+  }
+
+  /**
+   * Register a timer/interval so it can be cleaned up on stop/restart.
+   */
+  _registerTimer(timer) {
+    this.timers.push(timer);
+    return timer;
+  }
+
+  /**
+   * Clear all registered timers.
+   */
+  _clearAllTimers() {
+    for (const t of this.timers) {
+      if (typeof t === 'number') {
+        clearTimeout(t);
+        clearInterval(t);
+      }
+    }
+    this.timers = [];
+    this.backupTimer = null;
   }
 
   /**
@@ -33,6 +57,11 @@ class BackupScheduler {
       console.log('📦 Auto-backup is disabled (AUTO_BACKUP_ENABLED=false)');
       return;
     }
+    if (this.started) {
+      console.log('📦 Backup scheduler already running, skipping duplicate start');
+      return;
+    }
+    this.started = true;
 
     // Backup schedule: Daily at 2am
     const schedule = process.env.BACKUP_CRON || '0 2 * * *';
@@ -43,18 +72,18 @@ class BackupScheduler {
     // In production, use node-cron or similar
     if (process.env.NODE_ENV === 'development') {
       // For development, run every hour for testing
-      this.backupTimer = setInterval(() => {
+      this.backupTimer = this._registerTimer(setInterval(() => {
         this.runBackup();
-      }, 60 * 60 * 1000); // 1 hour
+      }, 60 * 60 * 1000)); // 1 hour
     } else {
       // Production: daily at 2am
       this.scheduleCronBackup(schedule);
     }
 
     // Run initial backup on start (delayed)
-    setTimeout(() => {
+    this._registerTimer(setTimeout(() => {
       this.runBackup();
-    }, 30000); // Wait 30 seconds after startup
+    }, 30000)); // Wait 30 seconds after startup
   }
 
   /**
@@ -71,12 +100,12 @@ class BackupScheduler {
     const hoursUntil2AM = (2 - now.getHours() + 24) % 24;
     const msUntil2AM = hoursUntil2AM * 60 * 60 * 1000;
     
-    setTimeout(() => {
+    this._registerTimer(setTimeout(() => {
       this.runBackup();
-      this.backupTimer = setInterval(() => {
+      this.backupTimer = this._registerTimer(setInterval(() => {
         this.runBackup();
-      }, 24 * 60 * 60 * 1000); // Daily
-    }, msUntil2AM);
+      }, 24 * 60 * 60 * 1000)); // Daily
+    }, msUntil2AM));
   }
 
   /**
@@ -244,11 +273,9 @@ class BackupScheduler {
    * Stop the scheduler
    */
   stopBackupScheduler() {
-    if (this.backupTimer) {
-      clearInterval(this.backupTimer);
-      this.backupTimer = null;
-      console.log('📦 Backup scheduler stopped');
-    }
+    this._clearAllTimers();
+    this.started = false;
+    console.log('📦 Backup scheduler stopped');
   }
 }
 
