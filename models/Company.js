@@ -141,13 +141,13 @@ const companySchema = new mongoose.Schema({
   },
   subscription_plan: {
     type:    String,
-    enum:    ['trial', 'starter', 'professional', 'enterprise'],
-    default: 'trial'
+    enum:    ['starter', 'professional', 'enterprise'],
+    default: 'starter'
   },
   subscription_status: {
     type: String,
-    enum: ['trialing', 'active', 'past_due', 'suspended', 'cancelled'],
-    default: 'trialing'
+    enum: ['active', 'past_due', 'suspended', 'cancelled'],
+    default: 'active'
   },
   billing_cycle: {
     type: String,
@@ -166,6 +166,10 @@ const companySchema = new mongoose.Schema({
   feature_access: {
     type: mongoose.Schema.Types.Mixed,
     default: {}
+  },
+  subscription_modules: {
+    type: [String],
+    default: undefined
   },
   platform_notes: {
     type: String,

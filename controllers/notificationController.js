@@ -5,14 +5,47 @@ const emailService = require('../services/emailService');
 const Invoice = require('../models/Invoice');
 const Company = require('../models/Company');
 
+function getRequestUserId(req) {
+  return req.user?._id || req.user?.id;
+}
+
+function getRequestCompanyId(req) {
+  return req.company?._id || req.company || req.user?.company?._id || req.user?.company;
+}
+
+function sendMissingContext(res) {
+  return res.status(401).json({
+    success: false,
+    message: 'Authenticated user or company context is missing'
+  });
+}
+
 // @desc    Get all notifications for user
 // @route   GET /api/notifications
 // @access  Private
 exports.getNotifications = async (req, res, next) => {
   try {
-    const companyId = req.user.company._id;
-    const userId = req.user._id;
+    const companyId = getRequestCompanyId(req);
+    const userId = getRequestUserId(req);
     const { page = 1, limit = 20, unreadOnly } = req.query;
+
+    if (!userId) {
+      return sendMissingContext(res);
+    }
+
+    if (!companyId) {
+      return res.json({
+        success: true,
+        data: [],
+        pagination: {
+          page: parseInt(page),
+          limit: parseInt(limit),
+          total: 0,
+          pages: 0
+        },
+        unreadCount: 0
+      });
+    }
     
     const query = {
       company: companyId,
@@ -56,8 +89,19 @@ exports.getNotifications = async (req, res, next) => {
 // @access  Private
 exports.getUnreadCount = async (req, res, next) => {
   try {
-    const companyId = req.user.company._id;
-    const userId = req.user._id;
+    const companyId = getRequestCompanyId(req);
+    const userId = getRequestUserId(req);
+
+    if (!userId) {
+      return sendMissingContext(res);
+    }
+
+    if (!companyId) {
+      return res.json({
+        success: true,
+        count: 0
+      });
+    }
     
     const count = await Notification.countDocuments({
       company: companyId,
@@ -79,6 +123,11 @@ exports.getUnreadCount = async (req, res, next) => {
 // @access  Private
 exports.markAsRead = async (req, res, next) => {
   try {
+    const userId = getRequestUserId(req);
+    if (!userId) {
+      return sendMissingContext(res);
+    }
+
     const notification = await Notification.findById(req.params.id);
     
     if (!notification) {
@@ -89,7 +138,7 @@ exports.markAsRead = async (req, res, next) => {
     }
     
     // Verify ownership
-    if (notification.user.toString() !== req.user._id.toString()) {
+    if (notification.user.toString() !== userId.toString()) {
       return res.status(403).json({
         success: false,
         message: 'Not authorized'
@@ -114,8 +163,12 @@ exports.markAsRead = async (req, res, next) => {
 // @access  Private
 exports.markAllAsRead = async (req, res, next) => {
   try {
-    const companyId = req.user.company._id;
-    const userId = req.user._id;
+    const companyId = getRequestCompanyId(req);
+    const userId = getRequestUserId(req);
+
+    if (!companyId || !userId) {
+      return sendMissingContext(res);
+    }
     
     await Notification.updateMany(
       { company: companyId, user: userId, isRead: false },
@@ -136,6 +189,11 @@ exports.markAllAsRead = async (req, res, next) => {
 // @access  Private
 exports.deleteNotification = async (req, res, next) => {
   try {
+    const userId = getRequestUserId(req);
+    if (!userId) {
+      return sendMissingContext(res);
+    }
+
     const notification = await Notification.findById(req.params.id);
     
     if (!notification) {
@@ -146,7 +204,7 @@ exports.deleteNotification = async (req, res, next) => {
     }
     
     // Verify ownership
-    if (notification.user.toString() !== req.user._id.toString()) {
+    if (notification.user.toString() !== userId.toString()) {
       return res.status(403).json({
         success: false,
         message: 'Not authorized'
@@ -170,7 +228,11 @@ exports.deleteNotification = async (req, res, next) => {
 // @access  Private (admin)
 exports.getSettings = async (req, res, next) => {
   try {
-    const companyId = req.user.company._id;
+    const companyId = getRequestCompanyId(req);
+
+    if (!companyId) {
+      return sendMissingContext(res);
+    }
     
     let settings = await NotificationSettings.findOne({ company: companyId });
     
@@ -208,7 +270,11 @@ exports.getSettings = async (req, res, next) => {
 // @access  Private (admin)
 exports.updateSettings = async (req, res, next) => {
   try {
-    const companyId = req.user.company._id;
+    const companyId = getRequestCompanyId(req);
+
+    if (!companyId) {
+      return sendMissingContext(res);
+    }
     const {
       emailNotifications,
       smsNotifications,
@@ -360,9 +426,13 @@ exports.testSMS = async (req, res, next) => {
 exports.sendManualSummary = async (req, res, next) => {
   try {
     const { type } = req.body; // 'daily' or 'weekly'
-    const companyId = req.user.company._id;
+    const companyId = getRequestCompanyId(req);
     const Company = require('../models/Company');
     const emailService = require('../services/emailService');
+
+    if (!companyId) {
+      return sendMissingContext(res);
+    }
     
     const company = await Company.findById(companyId);
     
@@ -435,7 +505,11 @@ exports.sendManualSummary = async (req, res, next) => {
 exports.sendManualPaymentReminder = async (req, res, next) => {
   try {
     const { invoiceId } = req.body;
-    const companyId = req.user.company._id;
+    const companyId = getRequestCompanyId(req);
+
+    if (!companyId) {
+      return sendMissingContext(res);
+    }
 
     if (!invoiceId) {
       return res.status(400).json({

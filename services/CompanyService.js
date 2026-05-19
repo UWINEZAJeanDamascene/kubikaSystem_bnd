@@ -8,17 +8,54 @@ const SubscriptionPlanService = require('./SubscriptionPlanService');
 const { CHART_OF_ACCOUNTS } = require('../constants/chartOfAccounts');
 
 let PLAN_FEATURES = {
-  trial: ['inventory', 'sales', 'purchases', 'reports'],
   starter: ['inventory', 'sales', 'purchases', 'reports'],
   professional: ['inventory', 'sales', 'purchases', 'finance', 'reports', 'projects', 'fixed_assets'],
   enterprise: ['inventory', 'sales', 'purchases', 'finance', 'payroll', 'reports', 'projects', 'fixed_assets', 'ai_assistant', 'integrations']
 };
 
 let PLAN_MODULES = {
-  trial: ['Dashboards', 'Products and categories', 'Warehouses', 'Stock levels and movements', 'Suppliers', 'Purchase orders', 'GRN', 'Clients', 'Quotations', 'Invoices', 'POS'],
   starter: ['Dashboards', 'Products and categories', 'Warehouses', 'Stock levels and movements', 'Suppliers', 'Purchase orders', 'GRN', 'Clients', 'Quotations', 'Invoices', 'POS'],
-  professional: ['Everything in Core', 'Sales orders', 'Pick and pack', 'Delivery notes', 'Credit notes', 'Recurring invoices', 'AR and AP', 'Bank accounts', 'Petty cash', 'Expenses', 'Reports hub', 'Batches', 'Serial numbers'],
-  enterprise: ['Everything in Business', 'Chart of accounts', 'Journal entries', 'Fixed assets', 'Liabilities', 'Budgets', 'Projects', 'Employees', 'Payroll runs', 'Financial reports', 'Security, roles and audit trail', 'Backups and bulk data', 'Batches', 'Serial numbers']
+  professional: ['Everything in Core', 'Sales orders', 'Pick and pack', 'Delivery notes', 'Credit notes', 'Recurring invoices', 'AR and AP', 'Bank accounts', 'Petty cash', 'Expenses', 'Reports hub', 'Profit and loss', 'Cash flow', 'Batches', 'Serial numbers'],
+  enterprise: ['Everything in Business', 'Chart of accounts', 'Journal entries', 'Fixed assets', 'Liabilities', 'Budgets', 'Projects', 'Employees', 'Payroll runs', 'Reports hub', 'Profit and loss', 'Balance sheet', 'Cash flow', 'Financial ratios', 'Debt maturity', 'Financial reports', 'Security, roles and audit trail', 'Backups and bulk data', 'Batches', 'Serial numbers']
+};
+
+const MODULE_ALIASES = {
+  'products & categories': ['Products and categories'],
+  'products and categories': ['Products and categories'],
+  'stock levels': ['Stock levels and movements'],
+  'stock movements': ['Stock levels and movements'],
+  'stock levels and movements': ['Stock levels and movements'],
+  'quotations & sales orders': ['Quotations', 'Sales orders'],
+  'quotations and sales orders': ['Quotations', 'Sales orders'],
+  'batches & serial numbers': ['Batches', 'Serial numbers'],
+  'batches and serial numbers': ['Batches', 'Serial numbers'],
+  'accounts receivable & payable': ['AR and AP'],
+  'accounts receivable and payable': ['AR and AP'],
+  'goods received': ['GRN'],
+  'purchase returns & purchases': ['Purchase orders'],
+  'purchase returns and purchases': ['Purchase orders'],
+  'chart of accounts': ['Chart of accounts'],
+  'liabilities & fixed assets': ['Liabilities', 'Fixed assets'],
+  'liabilities and fixed assets': ['Liabilities', 'Fixed assets'],
+  'budgets & budget settings': ['Budgets'],
+  'budgets and budget settings': ['Budgets'],
+  'reports hub': ['Reports hub'],
+  'profit & loss': ['Profit and loss'],
+  'profit and loss': ['Profit and loss'],
+  'cash flow': ['Cash flow'],
+  'balance sheet': ['Balance sheet'],
+  'financial ratios': ['Financial ratios'],
+  'debt maturity schedule': ['Debt maturity'],
+  'financial reports': ['Financial reports'],
+  'employees & departments': ['Employees'],
+  'employees and departments': ['Employees'],
+  'payroll & payroll runs': ['Payroll runs'],
+  'payroll and payroll runs': ['Payroll runs'],
+  'accounting periods': ['Financial reports'],
+  'finance control (full)': ['Chart of accounts', 'Journal entries', 'Fixed assets', 'Liabilities', 'Budgets', 'Projects', 'Employees', 'Payroll runs', 'Financial reports'],
+  'inventory core (full)': ['Batches', 'Serial numbers'],
+  'revenue flow (full)': ['Clients', 'Pick and pack', 'Credit notes', 'Recurring invoices', 'AR and AP'],
+  'intelligence (full)': ['Reports hub', 'Profit and loss', 'Balance sheet', 'Cash flow', 'Financial ratios', 'Debt maturity']
 };
 
 const FEATURE_KEYS = [
@@ -54,13 +91,70 @@ async function loadPlanFeatures() {
 }
 
 function buildFeatureAccess(plan, overrides = {}) {
-  const included = new Set(PLAN_FEATURES[plan] || PLAN_FEATURES.trial || []);
+  const included = new Set(PLAN_FEATURES[plan] || PLAN_FEATURES.starter || []);
   return FEATURE_KEYS.reduce((acc, key) => {
     acc[key] = Object.prototype.hasOwnProperty.call(overrides, key)
       ? Boolean(overrides[key])
       : included.has(key);
     return acc;
   }, {});
+}
+
+function normalizeModuleToken(value) {
+  return String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function splitPlanModule(rawModule) {
+  const value = normalizeModuleToken(rawModule);
+  if (!value) return [];
+  if (value.includes('|')) {
+    const [group, ...rest] = value.split('|');
+    return [group, rest.join('|')].map(normalizeModuleToken).filter(Boolean);
+  }
+  if (value.includes(':')) {
+    const [group, ...rest] = value.split(':');
+    return [group, rest.join(':')].map(normalizeModuleToken).filter(Boolean);
+  }
+  return [value];
+}
+
+function addModuleWithAliases(target, moduleName) {
+  const clean = normalizeModuleToken(moduleName);
+  if (!clean) return;
+  const lower = clean.toLowerCase();
+  const aliases = MODULE_ALIASES[lower] || [clean];
+  aliases.forEach((alias) => target.add(alias));
+}
+
+function expandPlanModulesForPlan(plan, seen = new Set()) {
+  if (seen.has(plan)) return new Set();
+  seen.add(plan);
+
+  const expanded = new Set(['Dashboards']);
+  const modules = PLAN_MODULES[plan] || [];
+
+  modules.forEach((rawModule) => {
+    const tokens = splitPlanModule(rawModule);
+    const normalizedRaw = normalizeModuleToken(rawModule).toLowerCase();
+    const normalizedTokens = tokens.map((token) => token.toLowerCase());
+
+    if (normalizedRaw.includes('everything in starter') || normalizedRaw.includes('everything in core') || normalizedTokens.some((token) => token.includes('everything in starter') || token.includes('everything in core'))) {
+      expandPlanModulesForPlan('starter', seen).forEach((moduleName) => expanded.add(moduleName));
+    }
+    if (normalizedRaw.includes('everything in growth') || normalizedRaw.includes('everything in professional') || normalizedRaw.includes('everything in business') || normalizedTokens.some((token) => token.includes('everything in growth') || token.includes('everything in professional') || token.includes('everything in business'))) {
+      expandPlanModulesForPlan('professional', seen).forEach((moduleName) => expanded.add(moduleName));
+    }
+
+    tokens.forEach((token) => addModuleWithAliases(expanded, token));
+  });
+
+  return expanded;
+}
+
+function getEffectivePlanModules(plan) {
+  return Array.from(expandPlanModulesForPlan(plan || 'starter'));
 }
 
 function escapeHtml(value) {
@@ -72,9 +166,24 @@ function escapeHtml(value) {
 }
 
 function serializeCompany(row) {
-  const featureAccess = buildFeatureAccess(row.subscription_plan || 'trial', row.feature_access || {});
+  const featureAccess = buildFeatureAccess(row.subscription_plan || 'starter', row.feature_access || {});
   const enabledModules = FEATURE_KEYS.filter((key) => featureAccess[key]);
-  const subscriptionModules = PLAN_MODULES[row.subscription_plan || 'trial'] || PLAN_MODULES.trial || [];
+  // Prefer persisted subscription_modules if explicitly set on the company; otherwise derive from the subscription plan
+  let subscriptionModules = Array.isArray(row.subscription_modules) && row.subscription_modules.length > 0
+    ? row.subscription_modules
+    : getEffectivePlanModules(row.subscription_plan || 'starter');
+
+  // Backward compatibility: old companies may only have the legacy 'Financial reports' umbrella.
+  // Inject granular report names so individual report items remain visible.
+  const hasLegacyFinancialReports = subscriptionModules.some(
+    (m) => String(m).toLowerCase() === 'financial reports'
+  );
+  if (hasLegacyFinancialReports) {
+    const granularReports = ['Reports hub', 'Profit and loss', 'Balance sheet', 'Cash flow', 'Financial ratios', 'Debt maturity'];
+    granularReports.forEach((m) => {
+      if (!subscriptionModules.includes(m)) subscriptionModules.push(m);
+    });
+  }
   return {
     _id: row._id,
     name: row.name,
@@ -93,8 +202,8 @@ function serializeCompany(row) {
     approvalStatus: row.approvalStatus,
     status: row.approvalStatus,
     isActive: row.isActive,
-    subscription_plan: row.subscription_plan || 'trial',
-    subscription_status: row.subscription_status || 'trialing',
+    subscription_plan: row.subscription_plan || 'starter',
+    subscription_status: row.subscription_status || 'active',
     billing_cycle: row.billing_cycle || 'monthly',
     billing_amount: row.billing_amount || 0,
     next_billing_date: row.next_billing_date || null,
@@ -200,18 +309,21 @@ class CompanyService {
       throw err;
     }
 
-    const selectedPlan = (c.subscription_plan || 'trial').toString().trim();
+    const selectedPlan = (c.subscription_plan || 'starter').toString().trim();
     const company = await Company.create({
       name: c.name.trim(),
       email: emailCompany,
-      phone: c.phone || null,
-      tax_identification_number: c.tin || null,
+      phone: c.phone || '',
+      address: c.address || {},
+      industry: c.industry || '',
+      base_currency: c.base_currency || 'RWF',
+      registration_number: c.registration_number || '',
+      tax_identification_number: c.tax_identification_number || '',
       approvalStatus: 'pending',
       isActive: false,
       subscription_plan: selectedPlan,
-      subscription_status: 'trialing',
+      subscription_status: 'active',
       feature_access: buildFeatureAccess(selectedPlan),
-      trial_ends_at: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
       registration_rejection_reason: null
     });
 
@@ -321,7 +433,7 @@ class CompanyService {
       packageMatrix: Object.entries(PLAN_FEATURES).map(([plan, features]) => ({
         plan,
         name: planMetaMap.get(plan)?.name || plan,
-        modules: planMetaMap.get(plan)?.modules || [],
+        modules: getEffectivePlanModules(plan),
         features
       }))
     };
@@ -331,7 +443,7 @@ class CompanyService {
     const company = await Company.findById(companyId);
     if (!company) throw new Error('COMPANY_NOT_FOUND');
 
-    const plan = payload.subscription_plan || company.subscription_plan || 'trial';
+    const plan = payload.subscription_plan || company.subscription_plan || 'starter';
     const hasNextBillingDate = Object.prototype.hasOwnProperty.call(payload, 'next_billing_date');
     const billingAmount = payload.billing_amount === undefined ? company.billing_amount : Number(payload.billing_amount);
     const update = {
@@ -341,16 +453,31 @@ class CompanyService {
       billing_amount: Number.isFinite(billingAmount) && billingAmount >= 0 ? billingAmount : company.billing_amount,
       next_billing_date: hasNextBillingDate ? payload.next_billing_date : company.next_billing_date,
       feature_access: buildFeatureAccess(plan, payload.feature_access || company.feature_access || {}),
+      subscription_modules: Array.isArray(payload.subscription_modules) ? payload.subscription_modules : company.subscription_modules,
       platform_notes: payload.platform_notes === undefined ? company.platform_notes : payload.platform_notes
     };
 
     if (['suspended', 'cancelled'].includes(update.subscription_status)) {
       update.isActive = false;
-    } else if (['trialing', 'active'].includes(update.subscription_status) && company.approvalStatus === 'approved') {
+    } else if (['active'].includes(update.subscription_status) && company.approvalStatus === 'approved') {
       update.isActive = true;
     }
 
-    Object.assign(company, update);
+    // Use .set() for Mixed fields so Mongoose tracks changes reliably
+    company.set('subscription_plan', update.subscription_plan);
+    company.set('subscription_status', update.subscription_status);
+    company.set('billing_cycle', update.billing_cycle);
+    company.set('billing_amount', update.billing_amount);
+    company.set('next_billing_date', update.next_billing_date);
+    company.set('feature_access', update.feature_access);
+    company.set('subscription_modules', update.subscription_modules);
+    company.set('platform_notes', update.platform_notes);
+    company.set('isActive', update.isActive);
+
+    // Mark Mixed fields as modified so Mongoose persists nested changes
+    company.markModified('feature_access');
+    company.markModified('subscription_modules');
+
     await company.save();
 
     await AuditLogService.log({
@@ -456,10 +583,11 @@ class CompanyService {
     if (company.approvalStatus !== 'pending') {
       throw new Error('COMPANY_NOT_PENDING');
     }
-    company.approvalStatus = 'approved';
-    company.isActive = true;
-    company.registration_rejection_reason = null;
-    company.feature_access = buildFeatureAccess(company.subscription_plan || 'trial');
+    company.set('approvalStatus', 'approved');
+    company.set('isActive', true);
+    company.set('registration_rejection_reason', null);
+    company.set('feature_access', buildFeatureAccess(company.subscription_plan || 'starter'));
+    company.markModified('feature_access');
     await company.save();
 
     await AuditLogService.log({
@@ -729,14 +857,14 @@ class CompanyService {
     };
 
     const mrr = companies
-      .filter((c) => c.subscription_status === 'active' || c.subscription_status === 'trialing')
+      .filter((c) => c.subscription_status === 'active')
       .reduce((sum, c) => sum + monthlyAmount(c.billing_amount, c.billing_cycle), 0);
 
     const mrrByPlan = {};
     companies.forEach((c) => {
-      const plan = c.subscription_plan || 'trial';
+      const plan = c.subscription_plan || 'starter';
       if (!mrrByPlan[plan]) mrrByPlan[plan] = 0;
-      if (c.subscription_status === 'active' || c.subscription_status === 'trialing') {
+      if (c.subscription_status === 'active') {
         mrrByPlan[plan] += monthlyAmount(c.billing_amount, c.billing_cycle);
       }
     });
@@ -744,14 +872,14 @@ class CompanyService {
     // Plan distribution
     const planDistribution = {};
     companies.forEach((c) => {
-      const plan = c.subscription_plan || 'trial';
+      const plan = c.subscription_plan || 'starter';
       planDistribution[plan] = (planDistribution[plan] || 0) + 1;
     });
 
     // Status distribution
     const statusDistribution = {};
     companies.forEach((c) => {
-      const status = c.subscription_status || 'trialing';
+      const status = c.subscription_status || 'active';
       statusDistribution[status] = (statusDistribution[status] || 0) + 1;
     });
 
