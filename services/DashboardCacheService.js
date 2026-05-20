@@ -1,11 +1,10 @@
 /**
  * Dashboard Cache Service
  *
- * In-memory cache for dashboard data.
- * Invalidated when new journal entries are posted.
+ * Dashboard cache facade.
  *
- * Do NOT use localStorage, Redis, or any external store in this phase.
- * Simple in-process Map with TTL is sufficient for MVP.
+ * Dashboards are intentionally uncached so operational screens reflect the
+ * latest sales, stock, journal, AR/AP, and banking activity on every request.
  */
 
 const MAX_DASHBOARD_CACHE_SIZE = 2000; // Hard cap on in-memory entries
@@ -14,8 +13,8 @@ class DashboardCacheService {
 
   constructor() {
     this.store = new Map()
-    // TTL: 60 seconds for most dashboards
-    // Shorter for financial data that changes frequently
+    // Kept for compatibility with services that call invalidate()/getStats().
+    // get() always misses and set() is a no-op.
     this.defaultTTL = 60 * 1000
     // Periodic cleanup every 5 minutes to evict stale entries
     this._cleanupTimer = setInterval(() => this._cleanup(true), 5 * 60 * 1000)
@@ -51,14 +50,7 @@ class DashboardCacheService {
    * @returns {object|null} Cached data or null if not found/expired
    */
   get(companyId, dashboardName, params = '') {
-    const key  = this._key(companyId, dashboardName, params)
-    const item = this.store.get(key)
-    if (!item) return null
-    if (Date.now() > item.expiresAt) {
-      this.store.delete(key)
-      return null
-    }
-    return item.data
+    return null
   }
 
   /**
@@ -70,15 +62,7 @@ class DashboardCacheService {
    * @param {number} ttlMs - Optional custom TTL in milliseconds
    */
   set(companyId, dashboardName, data, params = '', ttlMs = null) {
-    const key = this._key(companyId, dashboardName, params)
-    this.store.set(key, {
-      data,
-      expiresAt: Date.now() + (ttlMs || this.defaultTTL)
-    })
-    // Enforce max size immediately on write to avoid burst growth
-    if (this.store.size > MAX_DASHBOARD_CACHE_SIZE) {
-      this._cleanup()
-    }
+    return data
   }
 
   /**

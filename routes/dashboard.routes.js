@@ -9,7 +9,7 @@ const router = express.Router()
 const { protect } = require('../middleware/auth')
 const { authorize } = require('../middleware/authorize')
 const { attachCompanyId } = require('../middleware/companyContext')
-const { cacheMiddleware, sessionMiddleware } = require('../middleware/cacheMiddleware')
+const { sessionMiddleware } = require('../middleware/cacheMiddleware')
 
 const ExecutiveDashboardService = require('../services/dashboards/ExecutiveDashboardService')
 const InventoryDashboardService = require('../services/dashboards/InventoryDashboardService')
@@ -32,8 +32,8 @@ function asyncHandler (fn) {
 router.get('/executive',
   attachCompanyId,
   authorize('reports', 'read'),
-  cacheMiddleware({ type: 'dashboard', ttl: 60 }),
   asyncHandler(async (req, res) => {
+    res.set('Cache-Control', 'no-store')
     res.json(await ExecutiveDashboardService.get(req.companyId))
   })
 )
@@ -41,8 +41,8 @@ router.get('/executive',
 router.get('/inventory',
   attachCompanyId,
   authorize('reports', 'read'),
-  cacheMiddleware({ type: 'dashboard', ttl: 60 }),
   asyncHandler(async (req, res) => {
+    res.set('Cache-Control', 'no-store')
     res.json(await InventoryDashboardService.get(req.companyId))
   })
 )
@@ -50,8 +50,8 @@ router.get('/inventory',
 router.get('/sales',
   attachCompanyId,
   authorize('reports', 'read'),
-  cacheMiddleware({ type: 'dashboard', ttl: 60 }),
   asyncHandler(async (req, res) => {
+    res.set('Cache-Control', 'no-store')
     res.json(await SalesDashboardService.get(req.companyId))
   })
 )
@@ -59,8 +59,8 @@ router.get('/sales',
 router.get('/purchase',
   attachCompanyId,
   authorize('reports', 'read'),
-  cacheMiddleware({ type: 'dashboard', ttl: 60 }),
   asyncHandler(async (req, res) => {
+    res.set('Cache-Control', 'no-store')
     res.json(await PurchaseDashboardService.get(req.companyId))
   })
 )
@@ -68,8 +68,8 @@ router.get('/purchase',
 router.get('/finance',
   attachCompanyId,
   authorize('reports', 'read'),
-  cacheMiddleware({ type: 'dashboard', ttl: 60 }),
   asyncHandler(async (req, res) => {
+    res.set('Cache-Control', 'no-store')
     res.json(await FinanceDashboardService.get(req.companyId))
   })
 )
@@ -77,8 +77,8 @@ router.get('/finance',
 router.get('/ratios',
   attachCompanyId,
   authorize('reports', 'read'),
-  cacheMiddleware({ type: 'dashboard', ttl: 300 }),
   asyncHandler(async (req, res) => {
+    res.set('Cache-Control', 'no-store')
     res.json(await RatiosWidgetService.get(req.companyId))
   })
 )
@@ -86,8 +86,8 @@ router.get('/ratios',
 router.get('/period-comparison',
   attachCompanyId,
   authorize('reports', 'read'),
-  cacheMiddleware({ type: 'dashboard', ttl: 60 }),
   asyncHandler(async (req, res) => {
+    res.set('Cache-Control', 'no-store')
     res.json(await PeriodComparisonService.get(req.companyId))
   })
 )

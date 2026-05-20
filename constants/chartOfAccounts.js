@@ -575,7 +575,7 @@ const CHART_OF_ACCOUNTS = {
   5250: {
     name: "Bad Debt Expense",
     type: "expense",
-    subtype: "other_expense",
+    subtype: "operating",
     normalBalance: "debit",
     allowDirectPosting: true,
   },

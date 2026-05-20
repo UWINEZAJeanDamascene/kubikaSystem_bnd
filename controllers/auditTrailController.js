@@ -1,4 +1,13 @@
 const ActionLog = require('../models/ActionLog');
+const { redactSensitive } = require('../utils/redactSensitive');
+
+const sanitizeLog = (log) => {
+  if (!log) return log;
+  return {
+    ...log,
+    details: redactSensitive(log.details)
+  };
+};
 
 // @desc    Get all action logs (audit trail) for the company
 // @route   GET /api/audit-trail
@@ -56,7 +65,7 @@ exports.getAuditTrail = async (req, res, next) => {
       total,
       pages: Math.ceil(total / Number(limit)),
       currentPage: Number(page),
-      data: logs
+      data: logs.map(sanitizeLog)
     });
   } catch (error) {
     next(error);
@@ -145,7 +154,7 @@ exports.getAuditDetail = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Action log not found' });
     }
 
-    res.json({ success: true, data: log });
+    res.json({ success: true, data: sanitizeLog(log) });
   } catch (error) {
     next(error);
   }

@@ -1,4 +1,5 @@
 const ActionLog = require('../models/ActionLog');
+const { redactSensitive } = require('../utils/redactSensitive');
 
 const logAction = (module) => {
   return async (req, res, next) => {
@@ -23,9 +24,9 @@ const logAction = (module) => {
           details: {
             method: req.method,
             url: req.originalUrl,
-            body: req.body,
-            params: req.params,
-            query: req.query
+            body: redactSensitive(req.body),
+            params: redactSensitive(req.params),
+            query: redactSensitive(req.query)
           },
           ipAddress: req.ip,
           userAgent: req.get('user-agent'),

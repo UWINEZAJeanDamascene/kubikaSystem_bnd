@@ -1,6 +1,7 @@
 const mongoose = require("mongoose");
 const ChartOfAccount = require("../models/ChartOfAccount");
 const JournalEntry = require("../models/JournalEntry");
+const { CHART_OF_ACCOUNTS } = require("../constants/chartOfAccounts");
 const { aggregateWithTimeout } = require("../utils/mongoAggregation");
 
 /**
@@ -118,7 +119,7 @@ class PLStatementService {
     const dateFromInclusive = PLStatementService._parseDateBoundary(dateFrom, "start");
     const dateToInclusive = PLStatementService._parseDateBoundary(dateTo, "end");
 
-    const accountBalances = await aggregateWithTimeout(JournalEntry, [
+    const rawAccountBalances = await aggregateWithTimeout(JournalEntry, [
       {
         $match: {
           company: new mongoose.Types.ObjectId(companyId),
@@ -140,6 +141,24 @@ class PLStatementService {
       },
     ]);
 
+    const accountBalanceMap = new Map();
+    for (const balance of rawAccountBalances) {
+      const code = String(balance._id || "").trim();
+      if (!code) continue;
+
+      const existing = accountBalanceMap.get(code) || {
+        _id: code,
+        total_dr: 0,
+        total_cr: 0,
+      };
+
+      existing.total_dr += Number(balance.total_dr?.toString() || 0);
+      existing.total_cr += Number(balance.total_cr?.toString() || 0);
+      accountBalanceMap.set(code, existing);
+    }
+
+    const accountBalances = Array.from(accountBalanceMap.values());
+
     if (accountBalances.length === 0) {
       return PLStatementService._emptyPeriodData();
     }
@@ -154,7 +173,18 @@ class PLStatementService {
 
     const accountMap = {};
     for (const acc of accounts) {
-      accountMap[acc.code] = acc;
+      accountMap[String(acc.code || "").trim()] = acc;
+    }
+
+    for (const rawCode of accountCodes) {
+      const code = String(rawCode || "").trim();
+      if (!accountMap[code] && CHART_OF_ACCOUNTS[code]) {
+        accountMap[code] = {
+          _id: code,
+          code,
+          ...CHART_OF_ACCOUNTS[code],
+        };
+      }
     }
 
     // ── Step 3: Classify each account into IAS 1 P&L sections ───────
@@ -162,7 +192,7 @@ class PLStatementService {
     const cogsLines = []; // COGS (5000), Purchases (5100), Purchase Returns (5200 — contra, negated)
     const distributionCostLines = []; // Transport & Delivery (5700), Marketing (5850)
     const adminExpenseLines = []; // Salaries (5400), Rent (5500), Utilities (5600), etc.
-    const otherExpenseLines = []; // Bad Debt (5250), Other Expenses (6100), Loss on Disposal (6050)
+    const otherExpenseLines = []; // Other Expenses (6100), Loss on Disposal (6050)
     const otherIncomeLines = []; // Other Income (4200), Gain on Disposal (4250)
     const financeIncomeLines = []; // Interest Income (4300) — shown below EBIT per IAS 1
     const financeCostLines = []; // Interest Expense (6000), Bank Charges (6200)
@@ -170,7 +200,12 @@ class PLStatementService {
     const taxLines = []; // Corporate Tax (6400)
 
     for (const bal of accountBalances) {
-      const account = accountMap[bal._id];
+      const rawCode = String(bal._id || "").trim();
+      const configuredAccount = accountMap[rawCode];
+      const builtinAccount = CHART_OF_ACCOUNTS[rawCode];
+      const account = configuredAccount || (builtinAccount
+        ? { _id: rawCode, code: rawCode, ...builtinAccount }
+        : null);
       if (!account) continue;
 
       const dr = parseFloat(bal.total_dr?.toString() || "0");
@@ -184,20 +219,24 @@ class PLStatementService {
 
       // ── Contra accounts: negate so they REDUCE their parent section ──
       // e.g. Sales Returns (4100) reduces Revenue; Purchase Returns (5200) reduces COGS
-      if (account.subtype === "contra") {
+      const code = rawCode;
+      const effectiveSubtype =
+        code === "5300" ? "cogs" : code === "5200" ? "contra" : account.subtype || "";
+      const effectiveType = code === "5300" || code === "5200" ? "cogs" : account.type;
+
+      if (effectiveSubtype === "contra") {
         amount = -Math.abs(amount);
       }
 
       const line = {
         account_id: account._id,
-        account_code: account.code,
+        account_code: code,
         account_name: account.name,
         amount: Math.round(amount * 100) / 100,
       };
 
-      const subtype = account.subtype || "";
-      const type = account.type;
-      const code = account.code;
+      const subtype = effectiveSubtype;
+      const type = effectiveType;
 
       // ── Classification Logic (IAS 1) ──────────────────────────────
       if (type === "revenue") {
@@ -242,8 +281,13 @@ class PLStatementService {
           // Distribution Costs: Transport & Delivery (5700), Marketing & Advertising (5850)
           distributionCostLines.push(line);
         } else if (subtype === "other_expense" && code !== "5910") {
-          // Other Expenses: Bad Debt (5250), Other Expenses (6100)
-          otherExpenseLines.push(line);
+          if (code === "5250") {
+            // Bad Debt Expense is presented under Administrative Expenses.
+            adminExpenseLines.push(line);
+          } else {
+            // Other Expenses: Other Expenses (6100)
+            otherExpenseLines.push(line);
+          }
         } else if (code === "5910") {
           // Miscellaneous Expenses → Administrative Expenses (override stale subtype)
           adminExpenseLines.push(line);
@@ -253,8 +297,11 @@ class PLStatementService {
             // Distribution Costs: Transport & Delivery, Marketing & Advertising
             // (fallback for ChartOfAccount records created before subtype update)
             distributionCostLines.push(line);
-          } else if (code === "5250" || code === "6100") {
-            // Other Expenses: Bad Debt Expense, Other Expenses
+          } else if (code === "5250") {
+            // Bad Debt Expense → Administrative Expenses
+            adminExpenseLines.push(line);
+          } else if (code === "6100") {
+            // Other Expenses
             // (fallback for ChartOfAccount records created before subtype update)
             otherExpenseLines.push(line);
           } else {
@@ -272,6 +319,50 @@ class PLStatementService {
     }
 
     // ── Step 4: Sort each section by account code ───────────────────
+    if (!cogsLines.some((line) => line.account_code === "5300")) {
+      const directLaborFallback = await aggregateWithTimeout(JournalEntry, [
+        {
+          $match: {
+            company: new mongoose.Types.ObjectId(companyId),
+            status: "posted",
+            date: {
+              $gte: dateFromInclusive,
+              $lte: dateToInclusive,
+            },
+            "lines.accountCode": "5300",
+          },
+        },
+        { $unwind: "$lines" },
+        { $match: { "lines.accountCode": "5300" } },
+        {
+          $group: {
+            _id: "$lines.accountCode",
+            total_dr: { $sum: "$lines.debit" },
+            total_cr: { $sum: "$lines.credit" },
+          },
+        },
+      ]);
+
+      const directLabor = directLaborFallback[0];
+      if (directLabor) {
+        const amount =
+          Math.round(
+            (Number(directLabor.total_dr?.toString() || 0) -
+              Number(directLabor.total_cr?.toString() || 0)) *
+              100,
+          ) / 100;
+
+        if (amount !== 0) {
+          cogsLines.push({
+            account_id: accountMap["5300"]?._id || "5300",
+            account_code: "5300",
+            account_name: accountMap["5300"]?.name || "Direct Labor",
+            amount,
+          });
+        }
+      }
+    }
+
     const sortFn = (a, b) =>
       a.account_code.localeCompare(b.account_code, undefined, {
         numeric: true,
@@ -298,7 +389,7 @@ class PLStatementService {
     const totalOtherIncome = sumLines(otherIncomeLines); // Other Income (4200, 4250)
     const totalDistributionCosts = sumLines(distributionCostLines);
     const totalAdminExpenses = sumLines(adminExpenseLines); // Includes depreciation
-    const totalOtherExpenses = sumLines(otherExpenseLines); // Bad Debt, Loss on Disposal, etc.
+    const totalOtherExpenses = sumLines(otherExpenseLines); // Loss on Disposal, Other Expenses, etc.
 
     // ── Operating Profit (EBIT) per IAS 1 ────────────────────────────────
     // = Gross Profit + Other Operating Income − Distribution − Admin − Other Operating Expenses
@@ -418,7 +509,7 @@ class PLStatementService {
         total: totalAdminExpenses,
       },
 
-      // Section 7: Other Expenses (Bad Debt, Loss on Disposal, misc)
+      // Section 7: Other Expenses (Loss on Disposal, misc)
       other_expenses: {
         lines: otherExpenseLines,
         total: totalOtherExpenses,

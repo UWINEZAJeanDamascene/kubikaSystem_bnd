@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const {
   getEmployees,
+  getNextEmployeeId,
   getEmployeeById,
   createEmployee,
   updateEmployee,
@@ -17,6 +18,9 @@ router.use(protect);
 router.route('/')
   .get(getEmployees)
   .post(authorize('admin', 'manager', 'hr'), createEmployee);
+
+router.route('/next-id')
+  .get(getNextEmployeeId);
 
 router.route('/:id')
   .get(getEmployeeById)

@@ -3,6 +3,19 @@ const SalaryHistory = require("../models/SalaryHistory");
 const Payroll = require("../models/Payroll");
 const { parsePagination, paginationMeta } = require("../utils/pagination");
 
+async function generateNextEmployeeId(companyId) {
+  const employees = await Employee.find({ company: companyId })
+    .select("employeeId")
+    .lean();
+
+  const maxNumber = employees.reduce((max, employee) => {
+    const match = String(employee.employeeId || "").match(/^EMP(\d+)$/i);
+    return match ? Math.max(max, Number(match[1])) : max;
+  }, 0);
+
+  return `EMP${String(maxNumber + 1).padStart(3, "0")}`;
+}
+
 // @desc    Get all employees for a company
 // @route   GET /api/employees
 // @access  Private
@@ -39,6 +52,23 @@ exports.getEmployees = async (req, res, next) => {
       count: employees.length,
       data: employees,
       pagination: paginationMeta(page, limit, total),
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Get next generated employee ID
+// @route   GET /api/employees/next-id
+// @access  Private
+exports.getNextEmployeeId = async (req, res, next) => {
+  try {
+    const companyId = req.user.company._id;
+    const employeeId = await generateNextEmployeeId(companyId);
+
+    res.json({
+      success: true,
+      data: { employeeId },
     });
   } catch (error) {
     next(error);
@@ -95,7 +125,7 @@ exports.createEmployee = async (req, res, next) => {
     const userId = req.user._id;
 
     const {
-      employeeId,
+      employeeId: requestedEmployeeId,
       firstName,
       lastName,
       email,
@@ -123,17 +153,21 @@ exports.createEmployee = async (req, res, next) => {
       costCenter,
     } = req.body;
 
-    if (!employeeId || !firstName || !lastName) {
+    if (!firstName || !lastName) {
       return res.status(400).json({
         success: false,
-        message: "employeeId, firstName, and lastName are required",
+        message: "firstName and lastName are required",
       });
     }
+
+    const employeeId = requestedEmployeeId
+      ? requestedEmployeeId.trim().toUpperCase()
+      : await generateNextEmployeeId(companyId);
 
     // Check for duplicate employeeId within company
     const existing = await Employee.findOne({
       company: companyId,
-      employeeId: employeeId.trim().toUpperCase(),
+      employeeId,
     }).lean();
 
     if (existing) {
@@ -145,7 +179,7 @@ exports.createEmployee = async (req, res, next) => {
 
     const employee = new Employee({
       company: companyId,
-      employeeId: employeeId.trim().toUpperCase(),
+      employeeId,
       firstName: firstName.trim(),
       lastName: lastName.trim(),
       email: email || null,

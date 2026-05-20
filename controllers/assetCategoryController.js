@@ -89,7 +89,7 @@ exports.createCategory = async (req, res) => {
     } = req.body;
 
     // Validate required fields
-    if (!name || !defaultUsefulLifeMonths) {
+    if (!name || defaultUsefulLifeMonths === undefined || defaultUsefulLifeMonths === null) {
       return res.status(400).json({
         success: false,
         error: 'Name and default useful life months are required'

@@ -1,5 +1,6 @@
 const AuditLog = require('../models/AuditLog');
 const ActionLog = require('../models/ActionLog');
+const { SENSITIVE_KEY_PATTERN } = require('../utils/redactSensitive');
 
 /**
  * AuditLogService - Records all CRUD operations with user + timestamp
@@ -57,7 +58,9 @@ class AuditLogService {
         const out = {};
         for (const [k, v] of Object.entries(obj)) {
           try {
-            if (v == null) {
+            if (SENSITIVE_KEY_PATTERN.test(k)) {
+              out[k] = '[REDACTED]';
+            } else if (v == null) {
               out[k] = v;
             } else if (v instanceof Date) {
               out[k] = v.toISOString();

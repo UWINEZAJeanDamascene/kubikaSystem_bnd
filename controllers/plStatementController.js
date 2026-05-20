@@ -1,5 +1,4 @@
 const PLStatementService = require('../services/plStatementService');
-const cacheService = require('../services/cacheService');
 
 /**
  * P&L Statement Controller
@@ -23,28 +22,14 @@ const getPLStatement = async (req, res) => {
       });
     }
 
-    const cacheKey = {
-      companyId: req.companyId,
-      date_from,
-      date_to,
-      comparative_date_from: comparative_date_from || null,
-      comparative_date_to: comparative_date_to || null,
-    };
-    const cfg = cacheService.getCacheConfig('report');
-    const cached = await cacheService.fetchOrExecute(
-      'report',
-      async () =>
-        PLStatementService.generate(req.companyId, {
-          dateFrom: date_from,
-          dateTo: date_to,
-          comparativeDateFrom: comparative_date_from,
-          comparativeDateTo: comparative_date_to,
-        }),
-      cacheKey,
-      { ttl: cfg.ttl, useCompanyPrefix: true }
-    );
+    const statement = await PLStatementService.generate(req.companyId, {
+      dateFrom: date_from,
+      dateTo: date_to,
+      comparativeDateFrom: comparative_date_from,
+      comparativeDateTo: comparative_date_to,
+    });
 
-    res.json({ ...cached.data, from_cache: cached.fromCache });
+    res.json({ ...statement, from_cache: false, report_version: 'pl-direct-labor-fallback-v4' });
   } catch (err) {
     const validationErrors = new Set([
       'DATE_RANGE_REQUIRED',

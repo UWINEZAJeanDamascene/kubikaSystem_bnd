@@ -7,8 +7,198 @@ const TaxAutomationService = require("../services/taxAutomationService");
 const LaborAllocationService = require('../services/laborAllocationService');
 const { parsePagination, paginationMeta } = require("../utils/pagination");
 const JournalEntry = require("../models/JournalEntry");
-const { nextSequence } = require("../services/sequenceService");
-const PeriodService = require("../services/periodService");
+
+function round2(n) {
+  return Math.round((n || 0) * 100) / 100;
+}
+
+async function buildPayrollAccrualLines(companyId, payroll, suffix = "") {
+  const { DEFAULT_ACCOUNTS } = require("../constants/chartOfAccounts");
+
+  const grossSalary = round2(payroll.salary?.grossSalary);
+  const paye = round2(payroll.deductions?.paye);
+  const rssbEmployee = round2(
+    (payroll.deductions?.rssbEmployeePension || 0) +
+      (payroll.deductions?.rssbEmployeeMaternity || 0),
+  );
+  const netPay = round2(payroll.netPay);
+  const occupationalHazard = round2(payroll.contributions?.occupationalHazard);
+  const healthInsurance = round2(payroll.deductions?.healthInsurance);
+  const loanDeductions = round2(payroll.deductions?.loanDeductions);
+  const otherDeductions = round2(payroll.deductions?.otherDeductions);
+
+  const employeeName =
+    `${payroll.employee?.firstName || ""} ${payroll.employee?.lastName || ""}`.trim() ||
+    "Unknown Employee";
+  const periodLabel =
+    `${payroll.period?.monthName || ""} ${payroll.period?.year || ""}`.trim();
+
+  const allocation = await LaborAllocationService.allocateForEmployee(
+    payroll.employee_id,
+    grossSalary,
+    payroll.period?.month,
+    payroll.period?.year,
+    companyId,
+  );
+
+  const lines = [];
+
+  if (allocation.directAmount > 0) {
+    lines.push(
+      JournalService.createDebitLine(
+        DEFAULT_ACCOUNTS.directLabor || "5300",
+        allocation.directAmount,
+        `Direct labor accrual - ${employeeName} - ${periodLabel}${suffix}`,
+      ),
+    );
+  }
+
+  if (allocation.indirectAmount > 0) {
+    lines.push(
+      JournalService.createDebitLine(
+        DEFAULT_ACCOUNTS.salariesWages || "5400",
+        allocation.indirectAmount,
+        `Salary accrual - ${employeeName} - ${periodLabel}${suffix}`,
+      ),
+    );
+  }
+
+  if (paye > 0) {
+    lines.push(
+      JournalService.createCreditLine(
+        DEFAULT_ACCOUNTS.payePayable || "2230",
+        paye,
+        `PAYE withheld - ${employeeName}${suffix}`,
+      ),
+    );
+  }
+
+  if (rssbEmployee > 0) {
+    lines.push(
+      JournalService.createCreditLine(
+        DEFAULT_ACCOUNTS.rssbPayable || "2240",
+        rssbEmployee,
+        `RSSB employee deduction - ${employeeName}${suffix}`,
+      ),
+    );
+  }
+
+  if (occupationalHazard > 0) {
+    lines.push(
+      JournalService.createDebitLine(
+        DEFAULT_ACCOUNTS.rssbEmployerCost || "6150",
+        occupationalHazard,
+        `Occupational hazard - ${employeeName}${suffix}`,
+      ),
+    );
+    lines.push(
+      JournalService.createCreditLine(
+        DEFAULT_ACCOUNTS.employerContributionPayable || "2310",
+        occupationalHazard,
+        `Occupational hazard payable - ${employeeName}${suffix}`,
+      ),
+    );
+  }
+
+  if (healthInsurance > 0) {
+    lines.push(
+      JournalService.createCreditLine(
+        DEFAULT_ACCOUNTS.accruedExpenses || "2600",
+        healthInsurance,
+        `Health Insurance Payable - ${employeeName}${suffix}`,
+      ),
+    );
+  }
+
+  if (loanDeductions > 0) {
+    lines.push(
+      JournalService.createCreditLine(
+        DEFAULT_ACCOUNTS.accruedExpenses || "2600",
+        loanDeductions,
+        `Loan Deductions Payable - ${employeeName}${suffix}`,
+      ),
+    );
+  }
+
+  if (otherDeductions > 0) {
+    lines.push(
+      JournalService.createCreditLine(
+        DEFAULT_ACCOUNTS.accruedExpenses || "2600",
+        otherDeductions,
+        `Other Deductions Payable - ${employeeName}${suffix}`,
+      ),
+    );
+  }
+
+  if (netPay > 0) {
+    lines.push(
+      JournalService.createCreditLine(
+        DEFAULT_ACCOUNTS.accruedExpenses || "2600",
+        netPay,
+        `Net salary payable - ${employeeName}${suffix}`,
+      ),
+    );
+  }
+
+  return { lines, allocation, employeeName, periodLabel };
+}
+
+async function postPayrollAccrualJournals(companyId, userId, payroll, options = {}) {
+  const { DEFAULT_ACCOUNTS } = require("../constants/chartOfAccounts");
+  const suffix = options.suffix || "";
+  const entryDate =
+    options.entryDate ||
+    (payroll.pay_period_end ? new Date(payroll.pay_period_end) : new Date());
+  const grossSalary = round2(payroll.salary?.grossSalary);
+  const rssbEmployerPensionMaternity = round2(
+    (payroll.contributions?.rssbEmployerPension || 0) +
+      (payroll.contributions?.rssbEmployerMaternity || 0),
+  );
+
+  if (grossSalary <= 0) {
+    return { skippedZero: true };
+  }
+
+  const { lines, allocation, employeeName, periodLabel } =
+    await buildPayrollAccrualLines(companyId, payroll, suffix);
+
+  if (lines.length >= 2) {
+    await JournalService.createEntry(companyId, userId, {
+      date: entryDate,
+      description: `Payroll Accrual - ${employeeName} - ${periodLabel}${suffix}`,
+      sourceType: "payroll_salary",
+      sourceId: payroll._id,
+      sourceReference: periodLabel,
+      lines,
+      isAutoGenerated: true,
+    });
+  }
+
+  if (rssbEmployerPensionMaternity > 0) {
+    await JournalService.createEntry(companyId, userId, {
+      date: entryDate,
+      description: `Employer RSSB Contribution - ${employeeName} - ${periodLabel}${suffix}`,
+      sourceType: "payroll_employer",
+      sourceId: payroll._id,
+      sourceReference: periodLabel,
+      lines: [
+        JournalService.createDebitLine(
+          DEFAULT_ACCOUNTS.rssbEmployerCost || "6150",
+          rssbEmployerPensionMaternity,
+          `Employer RSSB - ${employeeName}${suffix}`,
+        ),
+        JournalService.createCreditLine(
+          DEFAULT_ACCOUNTS.rssbPayable || "2240",
+          rssbEmployerPensionMaternity,
+          `Employer RSSB pension/maternity - ${employeeName}${suffix}`,
+        ),
+      ],
+      isAutoGenerated: true,
+    });
+  }
+
+  return { allocation, skippedZero: false };
+}
 
 // @desc    Get all payroll records for a company
 // @route   GET /api/payroll
@@ -1021,9 +1211,28 @@ exports.finalisePayroll = async (req, res, next) => {
 
     // Check if already finalised or paid
     if (payroll.record_status === "finalised") {
-      return res.status(400).json({
-        success: false,
-        message: "Payroll record already finalised",
+      const postingResult = await postPayrollAccrualJournals(
+        companyId,
+        req.user._id,
+        payroll,
+      );
+
+      if (postingResult.allocation) {
+        payroll.laborAllocation = {
+          directAmount: postingResult.allocation.directAmount,
+          indirectAmount: postingResult.allocation.indirectAmount,
+          directPercentage: postingResult.allocation.directPct,
+          indirectPercentage: postingResult.allocation.indirectPct,
+          source: postingResult.allocation.source,
+          timesheetId: postingResult.allocation.timesheetId,
+        };
+        await payroll.save();
+      }
+
+      return res.json({
+        success: true,
+        data: payroll,
+        message: "Payroll record already finalised; journal entries are posted",
       });
     }
 
@@ -1040,6 +1249,23 @@ exports.finalisePayroll = async (req, res, next) => {
       const month = payroll.period.month;
       payroll.pay_period_start = new Date(year, month - 1, 1);
       payroll.pay_period_end = new Date(year, month, 0); // Last day of month
+    }
+
+    const postingResult = await postPayrollAccrualJournals(
+      companyId,
+      req.user._id,
+      payroll,
+    );
+
+    if (postingResult.allocation) {
+      payroll.laborAllocation = {
+        directAmount: postingResult.allocation.directAmount,
+        indirectAmount: postingResult.allocation.indirectAmount,
+        directPercentage: postingResult.allocation.directPct,
+        indirectPercentage: postingResult.allocation.indirectPct,
+        source: postingResult.allocation.source,
+        timesheetId: postingResult.allocation.timesheetId,
+      };
     }
 
     payroll.record_status = "finalised";
@@ -1330,7 +1556,7 @@ exports.backfillPayrollJournals = async (req, res, next) => {
       record_status: { $in: ["finalised", "paid"] },
     })
       .select(
-        "employee salary deductions contributions netPay period record_status pay_period_end createdBy",
+        "employee employee_id salary deductions contributions netPay period record_status pay_period_end createdBy",
       )
       .lean();
 
@@ -1384,6 +1610,13 @@ exports.backfillPayrollJournals = async (req, res, next) => {
         const entryDate = payroll.pay_period_end
           ? new Date(payroll.pay_period_end)
           : new Date();
+        const allocation = await LaborAllocationService.allocateForEmployee(
+          payroll.employee_id,
+          grossSalary,
+          payroll.period?.month,
+          payroll.period?.year,
+          companyId,
+        );
 
         // Build Journal 1: payroll expense accrual
         const lines1 = [
@@ -1391,10 +1624,27 @@ exports.backfillPayrollJournals = async (req, res, next) => {
             accountCode: DEFAULT_ACCOUNTS.salariesWages || "5400",
             accountName: "Salaries & Wages",
             description: `Salary accrual — ${employeeName} — ${periodLabel} [backfill]`,
-            debit: grossSalary,
+            debit: allocation.indirectAmount,
             credit: 0,
           },
         ];
+
+        if (allocation.directAmount > 0) {
+          lines1.unshift({
+            accountCode: DEFAULT_ACCOUNTS.directLabor || "5300",
+            accountName: "Direct Labor",
+            description: `Direct labor accrual - ${employeeName} - ${periodLabel} [backfill]`,
+            debit: allocation.directAmount,
+            credit: 0,
+          });
+        }
+
+        if (allocation.indirectAmount <= 0) {
+          const indirectIndex = lines1.findIndex(
+            (line) => line.accountCode === (DEFAULT_ACCOUNTS.salariesWages || "5400"),
+          );
+          if (indirectIndex >= 0) lines1.splice(indirectIndex, 1);
+        }
 
         if (paye > 0) {
           lines1.push({
@@ -1496,50 +1746,24 @@ exports.backfillPayrollJournals = async (req, res, next) => {
         }
 
         if (!dryRun) {
-          let periodId = null;
-          try {
-            periodId = await PeriodService.getOpenPeriodId(
-              companyId,
-              entryDate,
-            );
-          } catch (_) {
-            // period lookup failure is non-fatal
-          }
-
-          const entryNumber1 = await nextSequence(companyId, "JE");
-
-          await JournalEntry.create({
-            company: companyId,
-            entryNumber: entryNumber1,
+          await JournalService.createEntry(companyId, req.user._id, {
             date: entryDate,
             description: `Payroll Accrual — ${employeeName} — ${periodLabel} [backfill]`,
             sourceType: "payroll_salary",
             sourceId: payroll._id,
-            reference: periodLabel,
-            status: "posted",
+            sourceReference: periodLabel,
             lines: lines1,
-            totalDebit: totalDr1,
-            totalCredit: totalCr1,
-            debitTotal: totalDr1,
-            creditTotal: totalCr1,
-            period: periodId,
             isAutoGenerated: true,
-            createdBy: payroll.createdBy || req.user._id,
-            postedBy: req.user._id,
           });
 
           // Journal 2: employer RSSB contribution (pension/maternity only — hazard in Journal 1)
           if (rssbEmployerPensionMaternity > 0) {
-            const entryNumber2 = await nextSequence(companyId, "JE");
-            await JournalEntry.create({
-              company: companyId,
-              entryNumber: entryNumber2,
+            await JournalService.createEntry(companyId, req.user._id, {
               date: entryDate,
               description: `Employer RSSB Contribution — ${employeeName} — ${periodLabel} [backfill]`,
               sourceType: "payroll_employer",
               sourceId: payroll._id,
-              reference: periodLabel,
-              status: "posted",
+              sourceReference: periodLabel,
               lines: [
                 {
                   accountCode: DEFAULT_ACCOUNTS.rssbEmployerCost || "6150",
@@ -1556,14 +1780,7 @@ exports.backfillPayrollJournals = async (req, res, next) => {
                   credit: rssbEmployerPensionMaternity,
                 },
               ],
-              totalDebit: rssbEmployerPensionMaternity,
-              totalCredit: rssbEmployerPensionMaternity,
-              debitTotal: rssbEmployerPensionMaternity,
-              creditTotal: rssbEmployerPensionMaternity,
-              period: periodId,
               isAutoGenerated: true,
-              createdBy: payroll.createdBy || req.user._id,
-              postedBy: req.user._id,
             });
           }
         }

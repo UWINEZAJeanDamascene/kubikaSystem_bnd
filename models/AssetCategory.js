@@ -33,7 +33,7 @@ const assetCategorySchema = new mongoose.Schema({
   defaultUsefulLifeMonths: {
     type: Number,
     required: true,
-    min: 1
+    min: 0
   },
   defaultDepreciationMethod: {
     type: String,
