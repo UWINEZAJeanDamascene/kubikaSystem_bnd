@@ -6,7 +6,7 @@ const apPaymentAllocationSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'APPayment',
     required: true,
-    index: true
+    
   },
   
   // GRN / Invoice being paid (foreign key to goods_received_notes)
@@ -14,7 +14,7 @@ const apPaymentAllocationSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'GRN',
     required: true,
-    index: true
+    
   },
   
   // Amount allocated (DECIMAL(18,2))
@@ -31,7 +31,7 @@ const apPaymentAllocationSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Company',
     required: true,
-    index: true
+    
   },
   
   // Created by

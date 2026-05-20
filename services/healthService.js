@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const v8 = require('v8');
 const { redisClient, isRedisConfigured } = require('../config/redis');
 const { buildAdvancedMetrics } = require('./systemMetricsService');
 
@@ -6,11 +7,18 @@ const API_VERSION = process.env.API_VERSION || 'v1';
 
 /**
  * Heap usage ratio for memory.status (warning / critical thresholds).
+ * Use V8's heap limit rather than heapTotal. heapTotal is only the currently
+ * committed heap and can sit near heapUsed during normal operation.
  */
 function memoryStatusFromRatio(ratio) {
   if (ratio >= 0.95) return 'critical';
   if (ratio >= 0.85) return 'warning';
   return 'ok';
+}
+
+function memoryStatusFromUsage(heapUsedMb, heapLimitMb) {
+  const ratio = heapLimitMb > 0 ? heapUsedMb / heapLimitMb : 0;
+  return memoryStatusFromRatio(ratio);
 }
 
 // ── Memory growth tracking ────────────────────────────────────────────────
@@ -19,6 +27,10 @@ const MAX_HISTORY = 60;   // Keep last 60 snapshots (~30 min at 30s interval)
 const GROWTH_ALERT_MB = 50; // Log warning if heap grows >50MB between checks
 
 function recordMemoryGrowth(memory) {
+  const heapLimitMb = memory.heap_limit_mb || memory.heap_total_mb || 0;
+  const heapUsedPercent = typeof memory.heap_used_percent === 'number'
+    ? memory.heap_used_percent
+    : Math.round(heapLimitMb > 0 ? (memory.heap_used_mb / heapLimitMb) * 100 : 0);
   const entry = {
     timestamp: Date.now(),
     heap_used_mb: memory.heap_used_mb,
@@ -38,8 +50,8 @@ function recordMemoryGrowth(memory) {
       console.warn(
         `[HEALTH] Heap growth detected: +${growth.toFixed(1)}MB over last ~90s ` +
         `(recent avg ${recentAvg.toFixed(1)}MB, prior avg ${priorAvg.toFixed(1)}MB). ` +
-        `Current: ${memory.heap_used_mb.toFixed(1)}MB / ${memory.heap_total_mb.toFixed(1)}MB ` +
-        `(${Math.round((memory.heap_used_mb / memory.heap_total_mb) * 100)}%)`
+        `Current: ${memory.heap_used_mb.toFixed(1)}MB / ${heapLimitMb.toFixed(1)}MB ` +
+        `(${heapUsedPercent}%)`
       );
     }
   }
@@ -48,7 +60,7 @@ function recordMemoryGrowth(memory) {
   if (memory.status === 'critical') {
     console.error(
       `[HEALTH] CRITICAL memory: ${memory.heap_used_mb.toFixed(1)}MB used / ` +
-      `${memory.heap_total_mb.toFixed(1)}MB total (${Math.round((memory.heap_used_mb / memory.heap_total_mb) * 100)}%). ` +
+      `${heapLimitMb.toFixed(1)}MB limit (${heapUsedPercent}%). ` +
       `RSS: ${memory.rss_mb.toFixed(1)}MB. ` +
       `Recommend: restart process or enable --max-old-space-size with leak investigation.`
     );
@@ -70,14 +82,17 @@ function getMemoryTrend() {
   };
 }
 
-function buildMemorySnapshot(usage = process.memoryUsage()) {
+function buildMemorySnapshot(usage = process.memoryUsage(), heapStats = v8.getHeapStatistics()) {
   const heap_used_mb = Math.round((usage.heapUsed / 1024 / 1024) * 100) / 100;
   const heap_total_mb = Math.round((usage.heapTotal / 1024 / 1024) * 100) / 100;
+  const heap_limit_mb = Math.round(((heapStats.heap_size_limit || usage.heapTotal) / 1024 / 1024) * 100) / 100;
   const rss_mb = Math.round((usage.rss / 1024 / 1024) * 100) / 100;
-  const ratio = heap_total_mb > 0 ? heap_used_mb / heap_total_mb : 0;
+  const ratio = heap_limit_mb > 0 ? heap_used_mb / heap_limit_mb : 0;
   return {
     heap_used_mb,
     heap_total_mb,
+    heap_limit_mb,
+    heap_used_percent: Math.round(ratio * 100),
     rss_mb,
     status: memoryStatusFromRatio(ratio),
   };
@@ -185,6 +200,7 @@ module.exports = {
   checkCache,
   computeOverallStatus,
   memoryStatusFromRatio,
+  memoryStatusFromUsage,
   httpStatusForOverall,
   getMemoryTrend,
   recordMemoryGrowth,

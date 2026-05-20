@@ -93,6 +93,11 @@ const payrollRunSchema = new mongoose.Schema({
     ref: 'JournalEntry',
     default: null
   },
+  net_pay_journal_id: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'JournalEntry',
+    default: null
+  },
   paye_remit_journal_id: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'JournalEntry',

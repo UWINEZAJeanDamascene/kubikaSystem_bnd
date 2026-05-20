@@ -40,8 +40,23 @@ const validateConfig = () => {
 // ============================================
 
 const createTransporter = () => {
-  const { provider } = validateConfig();
+  const { provider, valid } = validateConfig();
   const nodeEnv = config.server.env;
+
+  // If configuration is invalid (missing credentials), return a safe no-op transporter
+  if (!valid) {
+    return {
+      verify: async () => false,
+      sendMail: async (mail) => {
+        try {
+          console.warn('[Mailer] Credentials missing, skipping email to', mail && mail.to);
+        } catch (e) {
+          console.warn('[Mailer] Credentials missing, skipping email');
+        }
+        return Promise.resolve({ accepted: [], rejected: [], envelope: mail && mail.envelope ? mail.envelope : {}, messageId: 'skipped' });
+      }
+    };
+  }
 
   const poolDefaults = {
     pool: true,

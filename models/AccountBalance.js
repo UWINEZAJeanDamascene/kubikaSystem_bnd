@@ -2,8 +2,8 @@ const mongoose = require('mongoose');
 const { Schema } = mongoose;
 
 const AccountBalanceSchema = new Schema({
-  company: { type: Schema.Types.ObjectId, ref: 'Company', required: true, index: true },
-  accountCode: { type: String, required: true, index: true },
+  company: { type: Schema.Types.ObjectId, ref: 'Company', required: true },
+  accountCode: { type: String, required: true },
   debit: { type: Number, default: 0, min: 0 },
   credit: { type: Number, default: 0, min: 0 },
   updatedAt: { type: Date, default: Date.now }

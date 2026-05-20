@@ -11,6 +11,17 @@ const fs = require('fs');
 // Load environment variables FIRST, before any other imports
 dotenv.config();
 
+// Prefer IPv4 DNS lookups to avoid IPv6 ENETUNREACH timeouts on some hosts
+try {
+  const dns = require('dns');
+  if (typeof dns.setDefaultResultOrder === 'function') {
+    dns.setDefaultResultOrder('ipv4first');
+    console.log('DNS resolver set to prefer IPv4');
+  }
+} catch (e) {
+  // ignore if not supported on older Node versions
+}
+
 const connectDB = require('./config/database');
 const errorHandler = require('./middleware/errorHandler');
 

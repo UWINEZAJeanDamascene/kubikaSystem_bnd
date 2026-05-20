@@ -1,7 +1,7 @@
 const mongoose = require('mongoose');
 
 const AccountMappingSchema = new mongoose.Schema({
-  company: { type: mongoose.Schema.Types.ObjectId, ref: 'Company', required: true, index: true },
+  company: { type: mongoose.Schema.Types.ObjectId, ref: 'Company', required: true },
   module: { type: String, required: true },
   key: { type: String, required: true },
   // accountCode may be a single code (string), a comma-separated string,
