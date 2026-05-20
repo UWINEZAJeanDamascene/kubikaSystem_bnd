@@ -1,6 +1,7 @@
 const ChartOfAccount = require("../models/ChartOfAccount");
 const JournalEntry = require("../models/JournalEntry");
 const { CHART_OF_ACCOUNTS } = require("../constants/chartOfAccounts");
+const cacheService = require("../services/cacheService");
 
 /**
  * Chart of Accounts Controller
@@ -230,6 +231,8 @@ exports.updateAccount = async (req, res, next) => {
     Object.assign(account, allowedUpdates);
     await account.save();
 
+    await cacheService.invalidateFinancialReportCaches(companyId);
+
     res.json({
       success: true,
       data: account,
@@ -439,6 +442,10 @@ exports.syncAccounts = async (req, res, next) => {
           results.skipped++;
         }
       }
+    }
+
+    if (!dryRun && results.updated.length > 0) {
+      await cacheService.invalidateFinancialReportCaches(companyId);
     }
 
     res.json({
