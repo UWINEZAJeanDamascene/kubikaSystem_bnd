@@ -2,6 +2,8 @@ const User = require('../models/User');
 const Role = require('../models/Role');
 const ActionLog = require('../models/ActionLog');
 const { notifyUserCreated, notifyPasswordChanged } = require('../services/notificationHelper');
+const Warehouse = require('../models/Warehouse');
+const EBMBranchService = require('../services/ebmBranchService');
 
 // Generate a random temporary password
 const generateTempPassword = (length = 8) => {
@@ -116,10 +118,17 @@ exports.createUser = async (req, res, next) => {
       company: companyId,
       role: userRole,
       roles: roleDoc ? [roleDoc._id] : [],
+      branch: req.body.branch || req.body.defaultWarehouse || null,
       createdBy: req.user.id,
       mustChangePassword,
       tempPassword: mustChangePassword
     });
+
+    if (user.branch) {
+      Warehouse.findOne({ _id: user.branch, company: companyId }).then((branch) => {
+        if (branch?.rraBranchId) return EBMBranchService.submitBranchUsers(companyId, branch.rraBranchId);
+      }).catch((err) => console.error('[User] EBM branch user submission failed:', err.message));
+    }
 
     res.status(201).json({
       success: true,
@@ -164,6 +173,7 @@ exports.updateUser = async (req, res, next) => {
         req.body.roles = [roleDoc._id];
       }
     }
+    const assignedBranch = req.body.branch || req.body.defaultWarehouse;
 
     const user = await User.findOneAndUpdate(
       { _id: req.params.id, company: companyId },
@@ -185,6 +195,12 @@ exports.updateUser = async (req, res, next) => {
       success: true,
       data: user
     });
+
+    if (assignedBranch) {
+      Warehouse.findOne({ _id: assignedBranch, company: companyId }).then((branch) => {
+        if (branch?.rraBranchId) return EBMBranchService.submitBranchUsers(companyId, branch.rraBranchId);
+      }).catch((err) => console.error('[User] EBM branch user update submission failed:', err.message));
+    }
   } catch (error) {
     next(error);
   }

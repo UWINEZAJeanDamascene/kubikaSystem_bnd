@@ -17,6 +17,23 @@
 
 const mongoose = require('mongoose');
 
+const toObjectId = (value) => new mongoose.Types.ObjectId(String(value));
+
+const toNumber = (value) => {
+  if (value === null || value === undefined || value === '') return 0;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  if (value && typeof value === 'object') {
+    if (value.$numberDecimal !== undefined) return toNumber(value.$numberDecimal);
+    if (typeof value.toString === 'function') return toNumber(value.toString());
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
 // Format currency in Rwandan Francs
 const formatRWF = (amount) => {
   if (amount === null || amount === undefined) return '-';
@@ -34,7 +51,14 @@ const formatNumber = (num) => {
 
 // Get date range for a specific day
 const getDateRange = (dateStr) => {
-  const date = new Date(dateStr);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dateStr || ''))) {
+    throw new Error('Date parameter must be in YYYY-MM-DD format');
+  }
+  const [year, month, day] = dateStr.split('-').map(Number);
+  const date = new Date(year, month - 1, day);
+  if (Number.isNaN(date.getTime())) {
+    throw new Error('Invalid date parameter');
+  }
   const start = new Date(date);
   start.setHours(0, 0, 0, 0);
   const end = new Date(date);
@@ -57,27 +81,27 @@ class DailyReportsService {
     const salesData = await Invoice.aggregate([
       {
         $match: {
-          company: new mongoose.Types.ObjectId(companyId),
+          company: toObjectId(companyId),
           invoiceDate: { $gte: new Date(start), $lte: new Date(end) },
-          status: { $in: ['fully_paid', 'partially_paid', 'confirmed', 'sent'] }
+          status: { $in: ['fully_paid', 'partially_paid', 'confirmed'] }
         }
       },
       {
         $group: {
           _id: null,
-          totalSales: { $sum: { $toDouble: '$total' } },
+          totalSales: { $sum: { $toDouble: { $ifNull: ['$totalAmount', '$total'] } } },
           totalInvoices: { $sum: 1 },
           cashSales: {
-            $sum: { $cond: [{ $eq: ['$paymentMethod', 'cash'] }, { $toDouble: '$total' }, 0] }
+            $sum: { $cond: [{ $eq: ['$paymentMethod', 'cash'] }, { $toDouble: { $ifNull: ['$totalAmount', '$total'] } }, 0] }
           },
           creditSales: {
-            $sum: { $cond: [{ $in: ['$paymentMethod', ['credit', 'on_account']] }, { $toDouble: '$total' }, 0] }
+            $sum: { $cond: [{ $in: ['$paymentMethod', ['credit', 'on_account']] }, { $toDouble: { $ifNull: ['$totalAmount', '$total'] } }, 0] }
           },
           mobileMoneySales: {
-            $sum: { $cond: [{ $eq: ['$paymentMethod', 'mobile_money'] }, { $toDouble: '$total' }, 0] }
+            $sum: { $cond: [{ $eq: ['$paymentMethod', 'mobile_money'] }, { $toDouble: { $ifNull: ['$totalAmount', '$total'] } }, 0] }
           },
           bankTransferSales: {
-            $sum: { $cond: [{ $eq: ['$paymentMethod', 'bank_transfer'] }, { $toDouble: '$total' }, 0] }
+            $sum: { $cond: [{ $eq: ['$paymentMethod', 'bank_transfer'] }, { $toDouble: { $ifNull: ['$totalAmount', '$total'] } }, 0] }
           },
           totalDiscount: { $sum: { $toDouble: { $ifNull: ['$discount', 0] } } },
           totalTax: { $sum: { $toDouble: { $ifNull: ['$taxAmount', 0] } } }
@@ -89,7 +113,7 @@ class DailyReportsService {
     const topProducts = await SalesOrder.aggregate([
       {
         $match: {
-          company: new mongoose.Types.ObjectId(companyId),
+          company: toObjectId(companyId),
           orderDate: { $gte: new Date(start), $lte: new Date(end) },
           status: { $in: ['delivered', 'invoiced', 'closed'] }
         }
@@ -169,17 +193,17 @@ class DailyReportsService {
       Purchase.aggregate([
         {
           $match: {
-            company: new mongoose.Types.ObjectId(companyId),
+            company: toObjectId(companyId),
             $or: [
               { receivedDate: { $gte: new Date(start), $lte: new Date(end) } },
-              { purchaseDate: { $gte: new Date(start), $lte: new Date(end) }, status: { $in: ['received', 'partial', 'completed', 'paid'] } }
+              { purchaseDate: { $gte: new Date(start), $lte: new Date(end) }, status: { $in: ['received', 'partial', 'paid'] } }
             ]
           }
         },
         {
           $group: {
             _id: null,
-            totalPurchases: { $sum: { $toDouble: '$grandTotal' } },
+            totalPurchases: { $sum: { $toDouble: { $ifNull: ['$grandTotal', '$total'] } } },
             totalOrders: { $sum: 1 },
             totalTax: { $sum: { $toDouble: { $ifNull: ['$totalTax', 0] } } },
             totalDiscount: { $sum: { $toDouble: { $ifNull: ['$totalDiscount', 0] } } }
@@ -190,7 +214,7 @@ class DailyReportsService {
       GoodsReceivedNote.aggregate([
         {
           $match: {
-            company: new mongoose.Types.ObjectId(companyId),
+            company: toObjectId(companyId),
             receivedDate: { $gte: new Date(start), $lte: new Date(end) },
             status: 'confirmed'
           }
@@ -210,7 +234,7 @@ class DailyReportsService {
     const grnSupplierData = await GoodsReceivedNote.aggregate([
       {
         $match: {
-          company: new mongoose.Types.ObjectId(companyId),
+          company: toObjectId(companyId),
           receivedDate: { $gte: new Date(start), $lte: new Date(end) },
           status: 'confirmed'
         }
@@ -228,17 +252,17 @@ class DailyReportsService {
     const purchaseSupplierData = await Purchase.aggregate([
       {
         $match: {
-          company: new mongoose.Types.ObjectId(companyId),
+          company: toObjectId(companyId),
           $or: [
             { receivedDate: { $gte: new Date(start), $lte: new Date(end) } },
-            { purchaseDate: { $gte: new Date(start), $lte: new Date(end) }, status: { $in: ['received', 'partial', 'completed', 'paid'] } }
+            { purchaseDate: { $gte: new Date(start), $lte: new Date(end) }, status: { $in: ['received', 'partial', 'paid'] } }
           ]
         }
       },
       {
         $group: {
           _id: '$supplier',
-          totalAmount: { $sum: { $toDouble: '$grandTotal' } },
+          totalAmount: { $sum: { $toDouble: { $ifNull: ['$grandTotal', '$total'] } } },
           orderCount: { $sum: 1 }
         }
       }
@@ -284,7 +308,7 @@ class DailyReportsService {
     });
 
     // Get supplier names
-    const supplierIds = Array.from(supplierTotals.keys()).map(id => new mongoose.Types.ObjectId(id));
+    const supplierIds = Array.from(supplierTotals.keys()).map(id => toObjectId(id));
     const suppliers = await Supplier.find({ _id: { $in: supplierIds } }, 'name');
     const supplierMap = new Map(suppliers.map(s => [s._id.toString(), s.name]));
 
@@ -352,69 +376,71 @@ class DailyReportsService {
       accounts.map(async (account) => {
         // Get opening balance (balance at start of day)
         const lastTransactionBefore = await BankTransaction.findOne({
-          company: new mongoose.Types.ObjectId(companyId),
-          account: new mongoose.Types.ObjectId(account._id),
+          company: toObjectId(companyId),
+          account: toObjectId(account._id),
           date: { $lt: new Date(start) }
         }).sort({ date: -1 });
         
-        // Convert Decimal128 to number if needed
-        let openingBalance = 0;
-        if (lastTransactionBefore?.balanceAfter) {
-          openingBalance = typeof lastTransactionBefore.balanceAfter === 'object' && lastTransactionBefore.balanceAfter.$numberDecimal 
-            ? parseFloat(lastTransactionBefore.balanceAfter.$numberDecimal)
-            : Number(lastTransactionBefore.balanceAfter);
-        } else if (account.openingBalance) {
-          openingBalance = typeof account.openingBalance === 'object' && account.openingBalance.$numberDecimal
-            ? parseFloat(account.openingBalance.$numberDecimal)
-            : Number(account.openingBalance);
-        }
+        const openingBalance = lastTransactionBefore
+          ? toNumber(lastTransactionBefore.balanceAfter)
+          : toNumber(account.openingBalance);
         
         // Get today's transactions
         const transactions = await BankTransaction.aggregate([
           {
             $match: {
-              company: new mongoose.Types.ObjectId(companyId),
-              account: new mongoose.Types.ObjectId(account._id),
+              company: toObjectId(companyId),
+              account: toObjectId(account._id),
               date: { $gte: new Date(start), $lte: new Date(end) }
             }
           },
           {
             $group: {
               _id: '$type',
-              total: { $sum: '$amount' },
+              total: { $sum: { $toDouble: { $ifNull: ['$amount', 0] } } },
               count: { $sum: 1 }
             }
           }
         ]);
         
-        const receipts = transactions.find(t => t._id === 'deposit')?.total || 0;
-        const payments = transactions.find(t => t._id === 'withdrawal')?.total || 0;
+        const receipts = transactions
+          .filter(t => ['deposit', 'transfer_in', 'opening'].includes(t._id))
+          .reduce((sum, t) => sum + toNumber(t.total), 0);
+        const payments = transactions
+          .filter(t => ['withdrawal', 'transfer_out', 'closing'].includes(t._id))
+          .reduce((sum, t) => sum + toNumber(t.total), 0);
+        const adjustments = transactions
+          .filter(t => t._id === 'adjustment')
+          .reduce((sum, t) => sum + toNumber(t.total), 0);
         
-        // Get journal entries affecting cash/bank
-        const journalEntries = await JournalEntry.aggregate([
+        const ledgerAccountId = account.ledgerAccountId || account.chartAccount || null;
+        const journalEntries = ledgerAccountId ? await JournalEntry.aggregate([
           {
             $match: {
-              company: new mongoose.Types.ObjectId(companyId),
+              company: toObjectId(companyId),
+              status: 'posted',
               date: { $gte: new Date(start), $lte: new Date(end) },
-              'lines.account': account.chartAccount
+              'lines.accountCode': ledgerAccountId
             }
           },
           { $unwind: '$lines' },
           {
             $match: {
-              'lines.account': account.chartAccount
+              'lines.accountCode': ledgerAccountId
             }
           },
           {
             $group: {
               _id: null,
-              totalDebit: { $sum: '$lines.debit' },
-              totalCredit: { $sum: '$lines.credit' }
+              totalDebit: { $sum: { $toDouble: { $ifNull: ['$lines.debit', 0] } } },
+              totalCredit: { $sum: { $toDouble: { $ifNull: ['$lines.credit', 0] } } }
             }
           }
-        ]);
+        ]) : [];
         
-        const journalNet = (journalEntries[0]?.totalDebit || 0) - (journalEntries[0]?.totalCredit || 0);
+        const journalNet = transactions.length === 0
+          ? toNumber(journalEntries[0]?.totalDebit) - toNumber(journalEntries[0]?.totalCredit)
+          : 0;
         
         return {
           accountId: account._id,
@@ -422,12 +448,12 @@ class DailyReportsService {
           accountNumber: account.accountNumber,
           bankName: account.bankName,
           accountType: account.accountType,
-          currency: account.currency,
+          currency: account.currencyCode || account.currency,
           openingBalance,
           receipts,
           payments,
           journalNet,
-          closingBalance: openingBalance + receipts - payments + journalNet
+          closingBalance: openingBalance + receipts - payments + adjustments + journalNet
         };
       })
     );
@@ -460,7 +486,7 @@ class DailyReportsService {
     
     // Get all movements for the day
     const movements = await StockMovement.find({
-      company: new mongoose.Types.ObjectId(companyId),
+      company: toObjectId(companyId),
       movementDate: { $gte: new Date(start), $lte: new Date(end) }
     })
     .populate('product', 'name sku')
@@ -472,14 +498,15 @@ class DailyReportsService {
     const stockOut = movements.filter(m => m.type === 'out' || ['sale', 'damage', 'loss', 'theft', 'expired', 'transfer_out', 'audit_shortage', 'dispatch'].includes(m.reason));
     
     // Calculate totals
-    const totalIn = stockIn.reduce((sum, m) => sum + (Number(m.quantity) * Number(m.unitCost || 0)), 0);
-    const totalOut = stockOut.reduce((sum, m) => sum + (Number(m.quantity) * Number(m.unitCost || 0)), 0);
+    const movementValue = (m) => toNumber(m.totalCost) || (toNumber(m.quantity) * toNumber(m.unitCost));
+    const totalIn = stockIn.reduce((sum, m) => sum + movementValue(m), 0);
+    const totalOut = stockOut.reduce((sum, m) => sum + movementValue(m), 0);
     
     // Get product running balances
     const productMovements = await StockMovement.aggregate([
       {
         $match: {
-          company: new mongoose.Types.ObjectId(companyId),
+          company: toObjectId(companyId),
           movementDate: { $lte: new Date(end) }
         }
       },
@@ -521,12 +548,12 @@ class DailyReportsService {
         warehouse: m.warehouse?.name || 'Unknown',
         type: m.type,
         reason: m.reason,
-        quantity: Number(m.quantity),
-        unitCost: Number(m.unitCost || 0),
-        totalValue: Number(m.quantity) * Number(m.unitCost || 0),
-        reference: m.reference,
+        quantity: toNumber(m.quantity),
+        unitCost: toNumber(m.unitCost),
+        totalValue: movementValue(m),
+        reference: m.referenceNumber,
         notes: m.notes,
-        runningBalance: balanceMap.get(m.product?._id?.toString()) || 0,
+        runningBalance: toNumber(m.newStock) || balanceMap.get(m.product?._id?.toString()) || 0,
         date: m.movementDate
       })),
       generatedAt: new Date().toISOString()
@@ -548,10 +575,11 @@ class DailyReportsService {
     const [newInvoices, paymentsReceived, creditNotes, invoiceTotals] = await Promise.all([
       // New invoices - only fetch needed fields
       Invoice.find({
-        company: new mongoose.Types.ObjectId(companyId),
-        invoiceDate: { $gte: new Date(start), $lte: new Date(end) }
+        company: toObjectId(companyId),
+        invoiceDate: { $gte: new Date(start), $lte: new Date(end) },
+        status: { $in: ['confirmed', 'partially_paid', 'fully_paid'] }
       }, { 
-        invoiceNumber: 1, invoiceDate: 1, totalAmount: 1, total: 1,
+        referenceNo: 1, invoiceDate: 1, totalAmount: 1, total: 1,
         status: 1, client: 1 
       })
       .populate('client', 'name')
@@ -559,34 +587,36 @@ class DailyReportsService {
       
       // Payments received
       ARReceipt.find({
-        company: new mongoose.Types.ObjectId(companyId),
-        receiptDate: { $gte: new Date(start), $lte: new Date(end) }
+        company: toObjectId(companyId),
+        receiptDate: { $gte: new Date(start), $lte: new Date(end) },
+        status: 'posted'
       }, {
-        receiptNumber: 1, receiptDate: 1, amount: 1,
-        paymentMethod: 1, client: 1, invoice: 1
+        referenceNo: 1, receiptDate: 1, amountReceived: 1,
+        paymentMethod: 1, client: 1
       })
       .populate('client', 'name')
-      .populate('invoice', 'invoiceNumber')
       .lean(),
       
       // Credit notes
       CreditNote.find({
-        company: new mongoose.Types.ObjectId(companyId),
-        creditDate: { $gte: new Date(start), $lte: new Date(end) }
+        company: toObjectId(companyId),
+        creditDate: { $gte: new Date(start), $lte: new Date(end) },
+        status: { $in: ['confirmed', 'issued', 'applied', 'partially_refunded', 'refunded'] }
       }, {
-        creditNoteNumber: 1, creditDate: 1, totalAmount: 1, total: 1,
+        referenceNo: 1, creditNoteNumber: 1, creditDate: 1, totalAmount: 1, total: 1,
         reason: 1, status: 1, client: 1, invoice: 1
       })
       .populate('client', 'name')
-      .populate('invoice', 'invoiceNumber')
+      .populate('invoice', 'referenceNo')
       .lean(),
       
       // Use aggregation for totals (runs on DB server, much faster)
       Invoice.aggregate([
         { 
           $match: { 
-            company: new mongoose.Types.ObjectId(companyId),
-            invoiceDate: { $gte: new Date(start), $lte: new Date(end) }
+            company: toObjectId(companyId),
+            invoiceDate: { $gte: new Date(start), $lte: new Date(end) },
+            status: { $in: ['confirmed', 'partially_paid', 'fully_paid'] }
           } 
         },
         { 
@@ -600,8 +630,8 @@ class DailyReportsService {
     
     // Calculate totals using aggregation results + fallback to reduce for other models
     const newInvoicesTotal = invoiceTotals[0]?.total || 0;
-    const paymentsTotal = paymentsReceived.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
-    const creditNotesTotal = creditNotes.reduce((sum, cn) => sum + (Number(cn.totalAmount) || Number(cn.total) || 0), 0);
+    const paymentsTotal = paymentsReceived.reduce((sum, p) => sum + toNumber(p.amountReceived), 0);
+    const creditNotesTotal = creditNotes.reduce((sum, cn) => sum + (toNumber(cn.totalAmount) || toNumber(cn.total)), 0);
     
     return {
       reportName: 'Daily Accounts Receivable Activity',
@@ -618,28 +648,28 @@ class DailyReportsService {
       },
       newInvoices: newInvoices.map(inv => ({
         invoiceId: inv._id,
-        invoiceNumber: inv.invoiceNumber,
+        invoiceNumber: inv.referenceNo,
         clientName: inv.client?.name || 'Unknown',
         date: inv.invoiceDate,
-        total: Number(inv.totalAmount || inv.total || 0),
+        total: toNumber(inv.totalAmount) || toNumber(inv.total),
         status: inv.status
       })),
       paymentsReceived: paymentsReceived.map(p => ({
         receiptId: p._id,
-        receiptNumber: p.receiptNumber,
+        receiptNumber: p.referenceNo,
         clientName: p.client?.name || 'Unknown',
-        invoiceNumber: p.invoice?.invoiceNumber,
+        invoiceNumber: '',
         date: p.receiptDate,
-        amount: Number(p.amount || 0),
+        amount: toNumber(p.amountReceived),
         paymentMethod: p.paymentMethod
       })),
       creditNotes: creditNotes.map(cn => ({
         creditNoteId: cn._id,
-        creditNoteNumber: cn.creditNoteNumber,
+        creditNoteNumber: cn.creditNoteNumber || cn.referenceNo,
         clientName: cn.client?.name || 'Unknown',
-        invoiceNumber: cn.invoice?.invoiceNumber,
+        invoiceNumber: cn.invoice?.referenceNo || '',
         date: cn.creditDate,
-        total: Number(cn.totalAmount || cn.total || 0),
+        total: toNumber(cn.totalAmount) || toNumber(cn.total),
         reason: cn.reason
       })),
       generatedAt: new Date().toISOString()
@@ -661,9 +691,9 @@ class DailyReportsService {
     const [newBills, paymentsMade, purchaseReturns, purchaseTotals] = await Promise.all([
       // New bills (purchases) - only fetch needed fields
       Purchase.find({
-        company: new mongoose.Types.ObjectId(companyId),
+        company: toObjectId(companyId),
         purchaseDate: { $gte: new Date(start), $lte: new Date(end) },
-        status: { $in: ['received', 'partial', 'completed'] }
+        status: { $in: ['received', 'partial', 'paid'] }
       }, {
         purchaseNumber: 1, purchaseDate: 1, grandTotal: 1, total: 1,
         status: 1, supplier: 1
@@ -673,35 +703,36 @@ class DailyReportsService {
       
       // Payments made
       APPayment.find({
-        company: new mongoose.Types.ObjectId(companyId),
-        paymentDate: { $gte: new Date(start), $lte: new Date(end) }
+        company: toObjectId(companyId),
+        paymentDate: { $gte: new Date(start), $lte: new Date(end) },
+        status: 'posted'
       }, {
-        paymentNumber: 1, paymentDate: 1, amount: 1,
-        paymentMethod: 1, supplier: 1, purchase: 1
+        referenceNo: 1, paymentDate: 1, amountPaid: 1,
+        paymentMethod: 1, supplier: 1
       })
       .populate('supplier', 'name')
-      .populate('purchase', 'purchaseNumber')
       .lean(),
       
       // Purchase returns (debit notes)
       PurchaseReturn.find({
-        company: new mongoose.Types.ObjectId(companyId),
-        returnDate: { $gte: new Date(start), $lte: new Date(end) }
+        company: toObjectId(companyId),
+        returnDate: { $gte: new Date(start), $lte: new Date(end) },
+        status: 'confirmed'
       }, {
-        returnNumber: 1, returnDate: 1, totalAmount: 1, total: 1,
-        reason: 1, supplier: 1, purchase: 1
+        referenceNo: 1, returnDate: 1, totalAmount: 1,
+        reason: 1, supplier: 1, grn: 1
       })
       .populate('supplier', 'name')
-      .populate('purchase', 'purchaseNumber')
+      .populate('grn', 'referenceNo')
       .lean(),
       
       // Use aggregation for purchase totals (runs on DB server)
       Purchase.aggregate([
         {
           $match: {
-            company: new mongoose.Types.ObjectId(companyId),
+            company: toObjectId(companyId),
             purchaseDate: { $gte: new Date(start), $lte: new Date(end) },
-            status: { $in: ['received', 'partial', 'completed'] }
+            status: { $in: ['received', 'partial', 'paid'] }
           }
         },
         {
@@ -715,8 +746,8 @@ class DailyReportsService {
     
     // Calculate totals using aggregation results + simple reduce for others
     const newBillsTotal = purchaseTotals[0]?.total || 0;
-    const paymentsTotal = paymentsMade.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
-    const returnsTotal = purchaseReturns.reduce((sum, pr) => sum + (Number(pr.totalAmount) || Number(pr.total) || 0), 0);
+    const paymentsTotal = paymentsMade.reduce((sum, p) => sum + toNumber(p.amountPaid), 0);
+    const returnsTotal = purchaseReturns.reduce((sum, pr) => sum + toNumber(pr.totalAmount), 0);
     
     return {
       reportName: 'Daily Accounts Payable Activity',
@@ -736,25 +767,25 @@ class DailyReportsService {
         purchaseNumber: bill.purchaseNumber,
         supplierName: bill.supplier?.name || 'Unknown',
         date: bill.purchaseDate,
-        total: Number(bill.grandTotal || bill.total || 0),
+        total: toNumber(bill.grandTotal) || toNumber(bill.total),
         status: bill.status
       })),
       paymentsMade: paymentsMade.map(p => ({
         paymentId: p._id,
-        paymentNumber: p.paymentNumber,
+        paymentNumber: p.referenceNo,
         supplierName: p.supplier?.name || 'Unknown',
-        purchaseNumber: p.purchase?.purchaseNumber,
+        purchaseNumber: '',
         date: p.paymentDate,
-        amount: Number(p.amount || 0),
+        amount: toNumber(p.amountPaid),
         paymentMethod: p.paymentMethod
       })),
       purchaseReturns: purchaseReturns.map(pr => ({
         returnId: pr._id,
-        returnNumber: pr.returnNumber,
+        returnNumber: pr.referenceNo,
         supplierName: pr.supplier?.name || 'Unknown',
-        purchaseNumber: pr.purchase?.purchaseNumber,
+        purchaseNumber: pr.grn?.referenceNo || '',
         date: pr.returnDate,
-        total: Number(pr.totalAmount || pr.total || 0),
+        total: toNumber(pr.totalAmount),
         reason: pr.reason
       })),
       generatedAt: new Date().toISOString()
@@ -771,8 +802,9 @@ class DailyReportsService {
     const JournalEntry = mongoose.model('JournalEntry');
     
     const entries = await JournalEntry.find({
-      company: new mongoose.Types.ObjectId(companyId),
-      date: { $gte: new Date(start), $lte: new Date(end) }
+      company: toObjectId(companyId),
+      date: { $gte: new Date(start), $lte: new Date(end) },
+      status: 'posted'
     })
     .populate('createdBy', 'firstName lastName')
     .sort({ createdAt: 1 });
@@ -784,12 +816,10 @@ class DailyReportsService {
       summary: {
         totalEntries: entries.length,
         totalDebits: entries.reduce((sum, e) => sum + e.lines.reduce((ls, l) => {
-          const debitVal = l.debit ? (typeof l.debit === 'object' && l.debit.$numberDecimal ? parseFloat(l.debit.$numberDecimal) : Number(l.debit)) : 0;
-          return ls + debitVal;
+          return ls + toNumber(l.debit);
         }, 0), 0),
         totalCredits: entries.reduce((sum, e) => sum + e.lines.reduce((ls, l) => {
-          const creditVal = l.credit ? (typeof l.credit === 'object' && l.credit.$numberDecimal ? parseFloat(l.credit.$numberDecimal) : Number(l.credit)) : 0;
-          return ls + creditVal;
+          return ls + toNumber(l.credit);
         }, 0), 0)
       },
       entries: entries.map(entry => ({
@@ -799,19 +829,13 @@ class DailyReportsService {
         description: entry.description,
         reference: entry.reference,
         postedBy: entry.createdBy ? `${entry.createdBy.firstName} ${entry.createdBy.lastName}` : 'System',
-        totalDebit: entry.totalDebit ? (typeof entry.totalDebit === 'object' && entry.totalDebit.$numberDecimal ? parseFloat(entry.totalDebit.$numberDecimal) : Number(entry.totalDebit)) : entry.lines.reduce((sum, l) => {
-          const debitVal = l.debit ? (typeof l.debit === 'object' && l.debit.$numberDecimal ? parseFloat(l.debit.$numberDecimal) : Number(l.debit)) : 0;
-          return sum + debitVal;
-        }, 0),
-        totalCredit: entry.totalCredit ? (typeof entry.totalCredit === 'object' && entry.totalCredit.$numberDecimal ? parseFloat(entry.totalCredit.$numberDecimal) : Number(entry.totalCredit)) : entry.lines.reduce((sum, l) => {
-          const creditVal = l.credit ? (typeof l.credit === 'object' && l.credit.$numberDecimal ? parseFloat(l.credit.$numberDecimal) : Number(l.credit)) : 0;
-          return sum + creditVal;
-        }, 0),
+        totalDebit: toNumber(entry.totalDebit) || entry.lines.reduce((sum, l) => sum + toNumber(l.debit), 0),
+        totalCredit: toNumber(entry.totalCredit) || entry.lines.reduce((sum, l) => sum + toNumber(l.credit), 0),
         lines: entry.lines.map(line => ({
           accountCode: line.accountCode,
           accountName: line.accountName,
-          debit: line.debit ? (typeof line.debit === 'object' && line.debit.$numberDecimal ? parseFloat(line.debit.$numberDecimal) : Number(line.debit)) : 0,
-          credit: line.credit ? (typeof line.credit === 'object' && line.credit.$numberDecimal ? parseFloat(line.credit.$numberDecimal) : Number(line.credit)) : 0,
+          debit: toNumber(line.debit),
+          credit: toNumber(line.credit),
           description: line.description
         }))
       })),
@@ -833,9 +857,9 @@ class DailyReportsService {
     const invoiceTax = await Invoice.aggregate([
       {
         $match: {
-          company: new mongoose.Types.ObjectId(companyId),
+          company: toObjectId(companyId),
           invoiceDate: { $gte: new Date(start), $lte: new Date(end) },
-          status: { $in: ['fully_paid', 'partially_paid', 'confirmed', 'sent'] }
+          status: { $in: ['fully_paid', 'partially_paid', 'confirmed'] }
         }
       },
       {
@@ -843,7 +867,8 @@ class DailyReportsService {
           _id: null,
           totalTax: { $sum: { $toDouble: { $ifNull: ['$taxAmount', 0] } } },
           subtotal: { $sum: { $toDouble: { $ifNull: ['$subtotal', 0] } } },
-          total: { $sum: { $toDouble: '$total' } }
+          totalDiscount: { $sum: { $toDouble: { $ifNull: ['$totalDiscount', '$discount'] } } },
+          total: { $sum: { $toDouble: { $ifNull: ['$totalAmount', '$total'] } } }
         }
       }
     ]);
@@ -852,9 +877,9 @@ class DailyReportsService {
     const taxBreakdown = await Invoice.aggregate([
       {
         $match: {
-          company: new mongoose.Types.ObjectId(companyId),
+          company: toObjectId(companyId),
           invoiceDate: { $gte: new Date(start), $lte: new Date(end) },
-          status: { $in: ['fully_paid', 'partially_paid', 'confirmed', 'sent'] }
+          status: { $in: ['fully_paid', 'partially_paid', 'confirmed'] }
         }
       },
       { $unwind: { path: '$lines', preserveNullAndEmptyArrays: true } },
@@ -868,7 +893,19 @@ class DailyReportsService {
           _id: '$lines.taxCode',
           taxCode: { $first: '$lines.taxCode' },
           taxRate: { $first: '$lines.taxRate' },
-          taxableAmount: { $sum: { $toDouble: { $ifNull: ['$lines.lineSubtotal', 0] } } },
+          taxableAmount: {
+            $sum: {
+              $subtract: [
+                { $toDouble: { $ifNull: ['$lines.lineSubtotal', 0] } },
+                {
+                  $multiply: [
+                    { $toDouble: { $ifNull: ['$lines.lineSubtotal', 0] } },
+                    { $divide: [{ $toDouble: { $ifNull: ['$lines.discountPct', 0] } }, 100] }
+                  ]
+                }
+              ]
+            }
+          },
           taxAmount: {
             $sum: { $toDouble: { $ifNull: ['$lines.lineTax', 0] } }
           }
@@ -877,23 +914,24 @@ class DailyReportsService {
       { $sort: { taxRate: 1 } }
     ]);
     
-    const taxData = invoiceTax[0] || { totalTax: 0, subtotal: 0, total: 0 };
+    const taxData = invoiceTax[0] || { totalTax: 0, subtotal: 0, totalDiscount: 0, total: 0 };
+    const taxableSales = Math.max(0, toNumber(taxData.subtotal) - toNumber(taxData.totalDiscount));
     
     return {
       reportName: 'Daily Tax Collected',
       date: dateStr,
       companyId,
       summary: {
-        totalOutputVAT: taxData.totalTax,
-        taxableSales: taxData.subtotal,
-        totalSales: taxData.total,
-        exemptSales: taxData.total - taxData.subtotal - taxData.totalTax
+        totalOutputVAT: toNumber(taxData.totalTax),
+        taxableSales,
+        totalSales: toNumber(taxData.total),
+        exemptSales: Math.max(0, toNumber(taxData.total) - taxableSales - toNumber(taxData.totalTax))
       },
       taxBreakdown: taxBreakdown.map(t => ({
         taxCode: t.taxCode || 'EXEMPT',
         taxRate: t.taxRate || 0,
-        taxableAmount: t.taxableAmount,
-        taxAmount: t.taxAmount
+        taxableAmount: toNumber(t.taxableAmount),
+        taxAmount: toNumber(t.taxAmount)
       })),
       generatedAt: new Date().toISOString()
     };

@@ -103,6 +103,13 @@ async function initializeServer() {
   require('./models/StockTransferLine');
   require('./models/StockBatch');
   require('./models/StockSerialNumber');
+  require('./models/EBMDevice');
+  require('./models/EBMCode');
+  require('./models/EBMItemClass');
+  require('./models/EBMTIN');
+  require('./models/EBMNotice');
+  require('./models/EBMSyncState');
+  require('./models/EBMImportedItem');
   require('./models/SalesOrder');
    require('./models/PickPack');
    require('./models/ARTransactionLedger');
@@ -303,6 +310,7 @@ async function initializeServer() {
   apiRouter.use('/serial-numbers', require('./routes/stockSerialNumberRoutes'));
   apiRouter.use('/periods', require('./routes/periodRoutes'));
   apiRouter.use('/settings', require('./routes/settingsRoutes'));
+  apiRouter.use('/ebm', require('./routes/ebmRoutes'));
   apiRouter.use('/opening-balances', require('./routes/openingBalanceRoutes'));
   apiRouter.use('/audit-logs', require('./routes/auditRoutes'));
   apiRouter.use('/testimonials', require('./routes/testimonialRoutes'));
@@ -434,6 +442,20 @@ async function initializeServer() {
       backupScheduler.startBackupScheduler();
     } catch (err) {
       console.warn('Could not start backup scheduler', err);
+    }
+
+    try {
+      const { startCodeSyncScheduler } = require('./services/ebmCodeSyncScheduler');
+      startCodeSyncScheduler();
+    } catch (err) {
+      console.warn('Could not start EBM code sync scheduler', err);
+    }
+
+    try {
+      const { startImportSyncScheduler } = require('./services/ebmImportSyncScheduler');
+      startImportSyncScheduler();
+    } catch (err) {
+      console.warn('Could not start EBM import sync scheduler', err);
     }
 
     // Start report scheduler (snapshot generation for weekly/monthly/quarterly/etc.)

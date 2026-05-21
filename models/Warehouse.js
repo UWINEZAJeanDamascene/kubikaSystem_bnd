@@ -59,6 +59,41 @@ const warehouseSchema = new mongoose.Schema({
   customFields: {
     type: mongoose.Schema.Types.Mixed,
     default: {}
+  },
+  rraBranchId: {
+    type: String,
+    trim: true,
+    minlength: 2,
+    maxlength: 2,
+    immutable: true,
+    default: null
+  },
+  ebmRegistrationStatus: {
+    type: String,
+    enum: ['not_registered', 'registered', 'failed'],
+    default: 'not_registered',
+    index: true
+  },
+  ebmRegisteredAt: {
+    type: Date,
+    default: null
+  },
+  ebmLastAttemptAt: {
+    type: Date,
+    default: null
+  },
+  ebmRegistrationError: {
+    type: String,
+    trim: true,
+    default: null
+  },
+  ebmUsersSubmitted: {
+    type: Boolean,
+    default: false
+  },
+  ebmInsuranceSubmitted: {
+    type: Boolean,
+    default: false
   }
 }, {
   timestamps: true
@@ -67,6 +102,7 @@ const warehouseSchema = new mongoose.Schema({
 // Compound index for company + unique code
 warehouseSchema.index({ company: 1, code: 1 }, { unique: true });
 warehouseSchema.index({ company: 1 });
+warehouseSchema.index({ company: 1, rraBranchId: 1 }, { unique: true, partialFilterExpression: { rraBranchId: { $type: 'string' } } });
 // Partial unique index to ensure only one default warehouse per company
 warehouseSchema.index(
   { company: 1, isDefault: 1 },
@@ -99,6 +135,26 @@ warehouseSchema.pre('save', async function(next) {
     }
   }
   next();
+});
+
+warehouseSchema.pre('save', async function(next) {
+  try {
+    if (!this.isNew || this.rraBranchId) return next();
+    if (this.isDefault) {
+      this.rraBranchId = '00';
+      return next();
+    }
+    const Sequence = require('./Sequence');
+    const seq = await Sequence.findOneAndUpdate(
+      { company: this.company, name: 'rra_branch_id', year: 0 },
+      { $inc: { seq: 1 } },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+    this.rraBranchId = String(seq.seq).padStart(2, '0');
+    next();
+  } catch (err) {
+    next(err);
+  }
 });
 
 // Prevent setting more than one default warehouse

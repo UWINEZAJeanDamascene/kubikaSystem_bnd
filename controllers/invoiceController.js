@@ -8,6 +8,7 @@ const InvoiceReceiptMetadata = require("../models/InvoiceReceiptMetadata");
 const ARReceipt = require("../models/ARReceipt");
 const ARReceiptAllocation = require("../models/ARReceiptAllocation");
 const PDFDocument = require("pdfkit");
+const QRCode = require("qrcode");
 const notificationService = require("../services/notificationHelper");
 const emailService = require("../services/emailService");
 const Company = require("../models/Company");
@@ -16,6 +17,8 @@ const { BankAccount, BankTransaction } = require("../models/BankAccount");
 const JournalService = require("../services/journalService");
 const { runInTransaction } = require("../services/transactionService");
 const { DEFAULT_ACCOUNTS } = require("../constants/chartOfAccounts");
+const EBMProductService = require("../services/ebmProductService");
+const EBMSalesService = require("../services/ebmSalesService");
 
 const {
   notifyInvoiceCreated,
@@ -195,6 +198,7 @@ exports.createInvoice = async (req, res, next) => {
 
     // Validate products and check stock
     const productMap = {};
+    await EBMProductService.assertProductsRegistered(companyId, invoiceLines.map((line) => line.product));
     for (const line of invoiceLines) {
       const product = await Product.findOne({
         _id: line.product,
@@ -740,9 +744,24 @@ exports.createInvoice = async (req, res, next) => {
       console.error("notifyInvoiceCreated failed", e);
     }
 
+    let responseInvoice = invoice;
+    if (autoConfirm && invoice.status === "confirmed") {
+      try {
+        responseInvoice = await EBMSalesService.submitInvoice(invoice._id, {
+          companyId,
+        });
+      } catch (ebmError) {
+        console.error("EBM sales submission failed after auto-confirm:", ebmError.message);
+        responseInvoice = ebmError.invoice || await Invoice.findOne({
+          _id: invoice._id,
+          company: companyId,
+        }).populate("client lines.product createdBy");
+      }
+    }
+
     res.status(201).json({
       success: true,
-      data: invoice,
+      data: responseInvoice,
     });
   } catch (error) {
     next(error);
@@ -1300,10 +1319,23 @@ exports.confirmInvoice = async (req, res, next) => {
       console.error("Cache invalidation failed:", e);
     }
 
+    let responseInvoice = invoice;
+    try {
+      responseInvoice = await EBMSalesService.submitInvoice(invoice._id, {
+        companyId,
+      });
+    } catch (ebmError) {
+      console.error("EBM sales submission failed after invoice confirmation:", ebmError.message);
+      responseInvoice = ebmError.invoice || await Invoice.findOne({
+        _id: invoice._id,
+        company: companyId,
+      }).populate("client lines.product createdBy");
+    }
+
     res.json({
       success: true,
       message: "Invoice confirmed and stock reserved",
-      data: invoice,
+      data: responseInvoice,
     });
   } catch (error) {
     next(error);
@@ -1860,6 +1892,10 @@ exports.generateInvoicePDF = async (req, res, next) => {
     // Get company info
     const company = await Company.findById(companyId);
 
+    const qrPng = invoice.ebm?.qrCode
+      ? await QRCode.toBuffer(invoice.ebm.qrCode, { margin: 1, width: 90 })
+      : null;
+
     // Create PDF document with more breathable layout
     const doc = new PDFDocument({ margin: 50, size: "A4", bufferPages: true });
 
@@ -1873,7 +1909,7 @@ exports.generateInvoicePDF = async (req, res, next) => {
     // Pipe PDF to response
     doc.pipe(res);
 
-    const currency = invoice.currencyCode || invoice.currency || "USD";
+    const currency = invoice.currencyCode || invoice.currency || "RWF";
     const currencySymbol =
       currency === "USD"
         ? "$"
@@ -1881,9 +1917,11 @@ exports.generateInvoicePDF = async (req, res, next) => {
           ? "€"
           : currency === "GBP"
             ? "£"
-            : currency === "LBP"
+        : currency === "LBP"
               ? "LL"
-              : "$";
+              : currency === "RWF"
+                ? "RWF"
+                : "$";
 
     // Helper to format money
     const fmt = (v) =>
@@ -1913,6 +1951,11 @@ exports.generateInvoicePDF = async (req, res, next) => {
       }
       if (company?.email) {
         doc.text(`Email: ${company.email}`, contactX, contactY);
+        contactY += 12;
+      }
+      const companyTin = company?.tax_identification_number || company?.registration_number;
+      if (companyTin) {
+        doc.text(`TIN: ${companyTin}`, contactX, contactY);
       }
 
       // Invoice title block
@@ -2007,6 +2050,25 @@ exports.generateInvoicePDF = async (req, res, next) => {
         doc.text(invoice.customerAddress, 310, startY + 58, { width: 230 });
     };
 
+    const drawRraDetails = (startY) => {
+      const ebm = invoice.ebm || {};
+      const status = ebm.ebmStatus || "not_submitted";
+      doc.rect(50, startY, doc.page.width - 100, 80).fillAndStroke("#ffffff", "#e5e7eb");
+      doc.fillColor("#374151").fontSize(10).font("Helvetica-Bold");
+      doc.text("RRA EBM DETAILS", 60, startY + 8);
+      doc.font("Helvetica").fontSize(8).fillColor("#6b7280");
+      doc.text(`Status: ${status.replace(/_/g, " ").toUpperCase()}`, 60, startY + 26);
+      doc.text(`Receipt No: ${ebm.rcptNo || (status === "pending" ? "Pending RRA" : "N/A")}`, 60, startY + 40);
+      doc.text(`Receipt Date: ${ebm.rcptDt || "N/A"}`, 60, startY + 54);
+      doc.text(`Signature: ${ebm.rcptSign || (status === "pending" ? "Pending" : "N/A")}`, 220, startY + 26, { width: 230 });
+      if (qrPng) {
+        doc.image(qrPng, doc.page.width - 135, startY + 12, { width: 62, height: 62 });
+      } else {
+        doc.rect(doc.page.width - 135, startY + 12, 62, 62).stroke("#d1d5db");
+        doc.fillColor("#9ca3af").fontSize(7).text("QR pending", doc.page.width - 130, startY + 38, { width: 52, align: "center" });
+      }
+    };
+
     // Table header renderer (callable on new pages)
     const tableHeader = (y) => {
       doc.rect(50, y, doc.page.width - 100, 28).fill("#111827");
@@ -2022,9 +2084,10 @@ exports.generateInvoicePDF = async (req, res, next) => {
     // Start first page
     drawHeader();
     drawInvoiceDetails(140);
+    drawRraDetails(230);
 
     // Table
-    let y = 230;
+    let y = 330;
     tableHeader(y);
     y += 36;
     doc.font("Helvetica").fontSize(9).fillColor("#111827");
@@ -2046,14 +2109,21 @@ exports.generateInvoicePDF = async (req, res, next) => {
 
       // Alternate background
       if (idx % 2 === 0) {
-        doc.rect(50, y - 6, doc.page.width - 100, 18).fill("#f9fafb");
+        doc.rect(50, y - 6, doc.page.width - 100, 32).fill("#f9fafb");
         doc.fillColor("#111827");
       }
 
       const productName = item.product?.name || item.description || "N/A";
+      const itemClass = item.product?.ebm?.itemClassCd || item.product?.ebm?.itemClassCode || "N/A";
+      const taxType = item.product?.ebm?.taxTyCd || item.product?.ebm?.taxTypeCode || item.taxCode || "A";
+      const lineTaxable = Math.max(0, Number(item.totalWithTax || item.lineTotal || 0) - Number(item.taxAmount || item.lineTax || 0));
+      const lineVat = Number(item.taxAmount || item.lineTax || 0);
       doc.fillColor("#111827");
       doc.text(`${idx + 1}`, 56, y);
       doc.text(productName, 80, y, { width: 230 });
+      doc.fontSize(7).fillColor("#6b7280");
+      doc.text(`Class: ${itemClass}  TaxTy: ${taxType}  Taxable: ${fmt(lineTaxable)}  VAT: ${fmt(lineVat)}`, 80, y + 11, { width: 230 });
+      doc.fontSize(9).fillColor("#111827");
       doc.text((item.quantity || 0).toString(), 320, y, {
         width: 40,
         align: "right",
@@ -2064,7 +2134,7 @@ exports.generateInvoicePDF = async (req, res, next) => {
         align: "right",
       });
       doc.text(fmt(item.totalWithTax), 510, y, { width: 70, align: "right" });
-      y += 20;
+      y += 34;
     });
 
     // Draw totals block (ensure space)

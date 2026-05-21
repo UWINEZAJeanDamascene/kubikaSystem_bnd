@@ -192,6 +192,9 @@ router.get('/purchases', authorize('reports', 'read'), async (req, res) => {
 router.get('/purchases/pdf', authorize('reports', 'read'), async (req, res) => {
   try {
     const { date } = req.query;
+    if (!date) {
+      return res.status(400).json({ success: false, error: 'Date parameter is required' });
+    }
     const data = await DailyReportsService.getDailyPurchasesSummary(req.companyId, date);
     const Company = require('../models/Company');
     const company = await Company.findById(req.companyId);
@@ -266,6 +269,9 @@ router.get('/purchases/pdf', authorize('reports', 'read'), async (req, res) => {
 router.get('/purchases/excel', authorize('reports', 'read'), async (req, res) => {
   try {
     const { date } = req.query;
+    if (!date) {
+      return res.status(400).json({ success: false, error: 'Date parameter is required' });
+    }
     const data = await DailyReportsService.getDailyPurchasesSummary(req.companyId, date);
     
     const buffer = await ExcelFormatter.createMultiSheet({
@@ -323,6 +329,9 @@ router.get('/cash-position', authorize('reports', 'read'), async (req, res) => {
 router.get('/cash-position/pdf', authorize('reports', 'read'), async (req, res) => {
   try {
     const { date } = req.query;
+    if (!date) {
+      return res.status(400).json({ success: false, error: 'Date parameter is required' });
+    }
     const data = await DailyReportsService.getDailyCashPosition(req.companyId, date);
     const Company = require('../models/Company');
     const company = await Company.findById(req.companyId);
@@ -377,19 +386,36 @@ router.get('/cash-position/pdf', authorize('reports', 'read'), async (req, res) 
 router.get('/cash-position/excel', authorize('reports', 'read'), async (req, res) => {
   try {
     const { date } = req.query;
+    if (!date) {
+      return res.status(400).json({ success: false, error: 'Date parameter is required' });
+    }
     const data = await DailyReportsService.getDailyCashPosition(req.companyId, date);
     
-    const buffer = await ExcelFormatter.format(data.accounts, {
-      sheetName: 'Cash Position',
-      title: `Daily Cash Position - ${date}`,
-      columns: [
-        { header: 'Account', key: 'accountName', width: 30 },
-        { header: 'Bank', key: 'bankName', width: 20 },
-        { header: 'Opening', key: 'openingBalance', width: 15, type: 'currency' },
-        { header: 'Receipts', key: 'receipts', width: 15, type: 'currency' },
-        { header: 'Payments', key: 'payments', width: 15, type: 'currency' },
-        { header: 'Closing', key: 'closingBalance', width: 15, type: 'currency' }
-      ]
+    const buffer = await ExcelFormatter.createMultiSheet({
+      'Summary': {
+        columns: [
+          { header: 'Metric', key: 'metric', width: 30 },
+          { header: 'Amount', key: 'amount', width: 15, type: 'currency' }
+        ],
+        data: [
+          { metric: 'Opening Balance', amount: data.summary.openingBalance },
+          { metric: 'Receipts', amount: data.summary.receipts },
+          { metric: 'Payments', amount: data.summary.payments },
+          { metric: 'Closing Balance', amount: data.summary.closingBalance }
+        ]
+      },
+      'Accounts': {
+        columns: [
+          { header: 'Account', key: 'accountName', width: 30 },
+          { header: 'Bank', key: 'bankName', width: 20 },
+          { header: 'Opening', key: 'openingBalance', width: 15, type: 'currency' },
+          { header: 'Receipts', key: 'receipts', width: 15, type: 'currency' },
+          { header: 'Payments', key: 'payments', width: 15, type: 'currency' },
+          { header: 'Journal Net', key: 'journalNet', width: 15, type: 'currency' },
+          { header: 'Closing', key: 'closingBalance', width: 15, type: 'currency' }
+        ],
+        data: data.accounts
+      }
     });
     
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
@@ -422,6 +448,9 @@ router.get('/stock-movement', authorize('reports', 'read'), async (req, res) => 
 router.get('/stock-movement/pdf', authorize('reports', 'read'), async (req, res) => {
   try {
     const { date } = req.query;
+    if (!date) {
+      return res.status(400).json({ success: false, error: 'Date parameter is required' });
+    }
     const data = await DailyReportsService.getDailyStockMovement(req.companyId, date);
     const Company = require('../models/Company');
     const company = await Company.findById(req.companyId);
@@ -480,21 +509,41 @@ router.get('/stock-movement/pdf', authorize('reports', 'read'), async (req, res)
 router.get('/stock-movement/excel', authorize('reports', 'read'), async (req, res) => {
   try {
     const { date } = req.query;
+    if (!date) {
+      return res.status(400).json({ success: false, error: 'Date parameter is required' });
+    }
     const data = await DailyReportsService.getDailyStockMovement(req.companyId, date);
     
-    const buffer = await ExcelFormatter.format(data.movements, {
-      sheetName: 'Stock Movement',
-      title: `Daily Stock Movement - ${date}`,
-      columns: [
-        { header: 'Product', key: 'productName', width: 40 },
-        { header: 'SKU', key: 'sku', width: 15 },
-        { header: 'Warehouse', key: 'warehouse', width: 20 },
-        { header: 'Type', key: 'type', width: 15 },
-        { header: 'Quantity', key: 'quantity', width: 12 },
-        { header: 'Unit Cost', key: 'unitCost', width: 15, type: 'currency' },
-        { header: 'Total Value', key: 'totalValue', width: 15, type: 'currency' },
-        { header: 'Running Balance', key: 'runningBalance', width: 15 }
-      ]
+    const buffer = await ExcelFormatter.createMultiSheet({
+      'Summary': {
+        columns: [
+          { header: 'Metric', key: 'metric', width: 30 },
+          { header: 'Value', key: 'value', width: 15 }
+        ],
+        data: [
+          { metric: 'Total Movements', value: data.summary.totalMovements },
+          { metric: 'Stock In Count', value: data.summary.stockInCount },
+          { metric: 'Stock Out Count', value: data.summary.stockOutCount },
+          { metric: 'Total In Value', value: data.summary.totalInValue },
+          { metric: 'Total Out Value', value: data.summary.totalOutValue },
+          { metric: 'Net Movement', value: data.summary.netMovement }
+        ]
+      },
+      'Movements': {
+        columns: [
+          { header: 'Product', key: 'productName', width: 40 },
+          { header: 'SKU', key: 'sku', width: 15 },
+          { header: 'Warehouse', key: 'warehouse', width: 20 },
+          { header: 'Type', key: 'type', width: 15 },
+          { header: 'Reason', key: 'reason', width: 18 },
+          { header: 'Quantity', key: 'quantity', width: 12 },
+          { header: 'Unit Cost', key: 'unitCost', width: 15, type: 'currency' },
+          { header: 'Total Value', key: 'totalValue', width: 15, type: 'currency' },
+          { header: 'Running Balance', key: 'runningBalance', width: 15 },
+          { header: 'Reference', key: 'reference', width: 20 }
+        ],
+        data: data.movements
+      }
     });
     
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
@@ -527,6 +576,9 @@ router.get('/ar-activity', authorize('reports', 'read'), async (req, res) => {
 router.get('/ar-activity/pdf', authorize('reports', 'read'), async (req, res) => {
   try {
     const { date } = req.query;
+    if (!date) {
+      return res.status(400).json({ success: false, error: 'Date parameter is required' });
+    }
     const data = await DailyReportsService.getDailyARActivity(req.companyId, date);
     const Company = require('../models/Company');
     const company = await Company.findById(req.companyId);
@@ -568,6 +620,40 @@ router.get('/ar-activity/pdf', authorize('reports', 'read'), async (req, res) =>
       
       doc.moveDown();
     }
+
+    if (data.paymentsReceived && data.paymentsReceived.length > 0) {
+      if (doc.y > doc.page.height - 170) doc.addPage();
+      doc.fontSize(11).font('Helvetica-Bold').text(`Payments Received (${data.paymentsReceived.length})`, 30, doc.y);
+      doc.moveDown(0.3);
+
+      pdfRenderer.renderDataTable(doc, {
+        headers: ['Receipt #', 'Client', 'Amount', 'Method'],
+        columnWidths: [110, 240, 100, 80],
+        data: data.paymentsReceived,
+        dataMapper: (item) => [item.receiptNumber, item.clientName, item.amount, item.paymentMethod],
+        alignments: ['left', 'left', 'right', 'left'],
+        formats: [null, null, pdfRenderer.FORMATTERS.currency, null]
+      });
+
+      doc.moveDown();
+    }
+
+    if (data.creditNotes && data.creditNotes.length > 0) {
+      if (doc.y > doc.page.height - 170) doc.addPage();
+      doc.fontSize(11).font('Helvetica-Bold').text(`Credit Notes (${data.creditNotes.length})`, 30, doc.y);
+      doc.moveDown(0.3);
+
+      pdfRenderer.renderDataTable(doc, {
+        headers: ['CN #', 'Client', 'Amount', 'Reason'],
+        columnWidths: [110, 220, 100, 100],
+        data: data.creditNotes,
+        dataMapper: (item) => [item.creditNoteNumber, item.clientName, item.total, item.reason || '-'],
+        alignments: ['left', 'left', 'right', 'left'],
+        formats: [null, null, pdfRenderer.FORMATTERS.currency, null]
+      });
+
+      doc.moveDown();
+    }
     
     pdfRenderer.renderFooter(doc, 1, 1);
     doc.end();
@@ -579,6 +665,9 @@ router.get('/ar-activity/pdf', authorize('reports', 'read'), async (req, res) =>
 router.get('/ar-activity/excel', authorize('reports', 'read'), async (req, res) => {
   try {
     const { date } = req.query;
+    if (!date) {
+      return res.status(400).json({ success: false, error: 'Date parameter is required' });
+    }
     const data = await DailyReportsService.getDailyARActivity(req.companyId, date);
     
     const buffer = await ExcelFormatter.createMultiSheet({
@@ -656,6 +745,9 @@ router.get('/ap-activity', authorize('reports', 'read'), async (req, res) => {
 router.get('/ap-activity/pdf', authorize('reports', 'read'), async (req, res) => {
   try {
     const { date } = req.query;
+    if (!date) {
+      return res.status(400).json({ success: false, error: 'Date parameter is required' });
+    }
     const data = await DailyReportsService.getDailyAPActivity(req.companyId, date);
     const Company = require('../models/Company');
     const company = await Company.findById(req.companyId);
@@ -678,6 +770,58 @@ router.get('/ap-activity/pdf', authorize('reports', 'read'), async (req, res) =>
       { label: 'Purchase Returns', value: `${data.summary.returnsCount} (${formatRWF(data.summary.returnsTotal)})` },
       { label: 'Net AP Change', value: formatRWF(data.summary.netAPChange) }
     ]);
+
+    pdfRenderer.renderDivider(doc);
+
+    if (data.newBills && data.newBills.length > 0) {
+      doc.fontSize(11).font('Helvetica-Bold').text(`New Bills (${data.newBills.length})`, 30, doc.y);
+      doc.moveDown(0.3);
+
+      pdfRenderer.renderDataTable(doc, {
+        headers: ['Bill #', 'Supplier', 'Amount', 'Status'],
+        columnWidths: [110, 240, 100, 80],
+        data: data.newBills,
+        dataMapper: (item) => [item.purchaseNumber, item.supplierName, item.total, item.status],
+        alignments: ['left', 'left', 'right', 'left'],
+        formats: [null, null, pdfRenderer.FORMATTERS.currency, null]
+      });
+
+      doc.moveDown();
+    }
+
+    if (data.paymentsMade && data.paymentsMade.length > 0) {
+      if (doc.y > doc.page.height - 170) doc.addPage();
+      doc.fontSize(11).font('Helvetica-Bold').text(`Payments Made (${data.paymentsMade.length})`, 30, doc.y);
+      doc.moveDown(0.3);
+
+      pdfRenderer.renderDataTable(doc, {
+        headers: ['Payment #', 'Supplier', 'Amount', 'Method'],
+        columnWidths: [110, 240, 100, 80],
+        data: data.paymentsMade,
+        dataMapper: (item) => [item.paymentNumber, item.supplierName, item.amount, item.paymentMethod],
+        alignments: ['left', 'left', 'right', 'left'],
+        formats: [null, null, pdfRenderer.FORMATTERS.currency, null]
+      });
+
+      doc.moveDown();
+    }
+
+    if (data.purchaseReturns && data.purchaseReturns.length > 0) {
+      if (doc.y > doc.page.height - 170) doc.addPage();
+      doc.fontSize(11).font('Helvetica-Bold').text(`Purchase Returns (${data.purchaseReturns.length})`, 30, doc.y);
+      doc.moveDown(0.3);
+
+      pdfRenderer.renderDataTable(doc, {
+        headers: ['Return #', 'Supplier', 'Amount', 'Reason'],
+        columnWidths: [110, 220, 100, 100],
+        data: data.purchaseReturns,
+        dataMapper: (item) => [item.returnNumber, item.supplierName, item.total, item.reason || '-'],
+        alignments: ['left', 'left', 'right', 'left'],
+        formats: [null, null, pdfRenderer.FORMATTERS.currency, null]
+      });
+
+      doc.moveDown();
+    }
     
     pdfRenderer.renderFooter(doc, 1, 1);
     doc.end();
@@ -689,6 +833,9 @@ router.get('/ap-activity/pdf', authorize('reports', 'read'), async (req, res) =>
 router.get('/ap-activity/excel', authorize('reports', 'read'), async (req, res) => {
   try {
     const { date } = req.query;
+    if (!date) {
+      return res.status(400).json({ success: false, error: 'Date parameter is required' });
+    }
     const data = await DailyReportsService.getDailyAPActivity(req.companyId, date);
     
     const buffer = await ExcelFormatter.createMultiSheet({
@@ -721,6 +868,16 @@ router.get('/ap-activity/excel', authorize('reports', 'read'), async (req, res) 
           { header: 'Method', key: 'paymentMethod', width: 15 }
         ],
         data: data.paymentsMade
+      },
+      'Purchase Returns': {
+        columns: [
+          { header: 'Return #', key: 'returnNumber', width: 15 },
+          { header: 'Supplier', key: 'supplierName', width: 30 },
+          { header: 'GRN', key: 'purchaseNumber', width: 15 },
+          { header: 'Amount', key: 'total', width: 15, type: 'currency' },
+          { header: 'Reason', key: 'reason', width: 25 }
+        ],
+        data: data.purchaseReturns
       }
     });
     
@@ -754,6 +911,9 @@ router.get('/journal-entries', authorize('reports', 'read'), async (req, res) =>
 router.get('/journal-entries/pdf', authorize('reports', 'read'), async (req, res) => {
   try {
     const { date } = req.query;
+    if (!date) {
+      return res.status(400).json({ success: false, error: 'Date parameter is required' });
+    }
     const data = await DailyReportsService.getDailyJournalEntries(req.companyId, date);
     const Company = require('../models/Company');
     const company = await Company.findById(req.companyId);
@@ -817,6 +977,9 @@ router.get('/journal-entries/pdf', authorize('reports', 'read'), async (req, res
 router.get('/journal-entries/excel', authorize('reports', 'read'), async (req, res) => {
   try {
     const { date } = req.query;
+    if (!date) {
+      return res.status(400).json({ success: false, error: 'Date parameter is required' });
+    }
     const data = await DailyReportsService.getDailyJournalEntries(req.companyId, date);
     
     // Flatten entries for Excel
@@ -838,19 +1001,32 @@ router.get('/journal-entries/excel', authorize('reports', 'read'), async (req, r
       });
     });
     
-    const buffer = await ExcelFormatter.format(flatData, {
-      sheetName: 'Journal Entries',
-      title: `Daily Journal Entries - ${date}`,
-      columns: [
-        { header: 'Entry #', key: 'entryNumber', width: 15 },
-        { header: 'Date', key: 'date', width: 15 },
-        { header: 'Description', key: 'description', width: 30 },
-        { header: 'Account Code', key: 'accountCode', width: 12 },
-        { header: 'Account Name', key: 'accountName', width: 30 },
-        { header: 'Debit', key: 'debit', width: 15, type: 'currency' },
-        { header: 'Credit', key: 'credit', width: 15, type: 'currency' },
-        { header: 'Posted By', key: 'postedBy', width: 20 }
-      ]
+    const buffer = await ExcelFormatter.createMultiSheet({
+      'Summary': {
+        columns: [
+          { header: 'Metric', key: 'metric', width: 30 },
+          { header: 'Value', key: 'value', width: 15 }
+        ],
+        data: [
+          { metric: 'Total Entries', value: data.summary.totalEntries },
+          { metric: 'Total Debits', value: data.summary.totalDebits },
+          { metric: 'Total Credits', value: data.summary.totalCredits }
+        ]
+      },
+      'Journal Lines': {
+        columns: [
+          { header: 'Entry #', key: 'entryNumber', width: 15 },
+          { header: 'Date', key: 'date', width: 15 },
+          { header: 'Description', key: 'description', width: 30 },
+          { header: 'Reference', key: 'reference', width: 18 },
+          { header: 'Account Code', key: 'accountCode', width: 12 },
+          { header: 'Account Name', key: 'accountName', width: 30 },
+          { header: 'Debit', key: 'debit', width: 15, type: 'currency' },
+          { header: 'Credit', key: 'credit', width: 15, type: 'currency' },
+          { header: 'Posted By', key: 'postedBy', width: 20 }
+        ],
+        data: flatData
+      }
     });
     
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
@@ -883,6 +1059,9 @@ router.get('/tax-collected', authorize('reports', 'read'), async (req, res) => {
 router.get('/tax-collected/pdf', authorize('reports', 'read'), async (req, res) => {
   try {
     const { date } = req.query;
+    if (!date) {
+      return res.status(400).json({ success: false, error: 'Date parameter is required' });
+    }
     const data = await DailyReportsService.getDailyTaxCollected(req.companyId, date);
     const Company = require('../models/Company');
     const company = await Company.findById(req.companyId);
@@ -938,6 +1117,9 @@ router.get('/tax-collected/pdf', authorize('reports', 'read'), async (req, res) 
 router.get('/tax-collected/excel', authorize('reports', 'read'), async (req, res) => {
   try {
     const { date } = req.query;
+    if (!date) {
+      return res.status(400).json({ success: false, error: 'Date parameter is required' });
+    }
     const data = await DailyReportsService.getDailyTaxCollected(req.companyId, date);
     
     const buffer = await ExcelFormatter.createMultiSheet({

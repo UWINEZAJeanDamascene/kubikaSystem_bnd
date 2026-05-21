@@ -41,7 +41,6 @@ exports.createPurchaseOrder = async (req, res, next) => {
       payload.freight.account = payload.freight.account || '5110';
       payload.freight.paymentMethod = payload.freight.paymentMethod || 'on_account';
     }
-
     const po = await PurchaseOrder.create(payload);
     
     const sendEmailOnCreate = req.body.sendEmail || false;

@@ -1,6 +1,7 @@
 const Warehouse = require('../models/Warehouse');
 const InventoryBatch = require('../models/InventoryBatch');
 const Product = require('../models/Product');
+const EBMBranchService = require('../services/ebmBranchService');
 
 // @desc    Get all warehouses
 // @route   GET /api/stock/warehouses
@@ -125,6 +126,10 @@ exports.createWarehouse = async (req, res, next) => {
       createdBy: req.user.id
     });
 
+    EBMBranchService.registerBranch(companyId, warehouse, req.user.id).catch((err) => {
+      console.error('[Warehouse] EBM branch registration failed:', err.message);
+    });
+
     res.status(201).json({
       success: true,
       data: warehouse
@@ -175,6 +180,10 @@ exports.updateWarehouse = async (req, res, next) => {
       req.body,
       { new: true, runValidators: true }
     );
+
+    EBMBranchService.registerBranch(companyId, warehouse, req.user.id).catch((err) => {
+      console.error('[Warehouse] EBM branch update registration failed:', err.message);
+    });
 
     res.json({
       success: true,

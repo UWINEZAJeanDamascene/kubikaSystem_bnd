@@ -1,5 +1,6 @@
 const mongoose = require("mongoose");
 const { generateUniqueNumber } = require("./utils/autoIncrement");
+const ebmSubmissionSchema = require("./schemas/ebmSubmissionSchema");
 
 // Module 8 - Credit Note Line Schema
 const creditNoteLineSchema = new mongoose.Schema({
@@ -252,6 +253,10 @@ const creditNoteSchema = new mongoose.Schema(
       ref: "User",
       required: true,
     },
+    ebm: {
+      type: ebmSubmissionSchema,
+      default: () => ({}),
+    },
   },
   {
     timestamps: true,
@@ -265,6 +270,7 @@ creditNoteSchema.index({ company: 1, status: 1 });
 creditNoteSchema.index({ invoice: 1 });
 creditNoteSchema.index({ client: 1 });
 creditNoteSchema.index({ creditDate: 1 });
+creditNoteSchema.index({ company: 1, "ebm.ebmStatus": 1 });
 
 // Pre-save hook to generate CN-YYYY-NNNNN reference number
 creditNoteSchema.pre("save", async function (next) {

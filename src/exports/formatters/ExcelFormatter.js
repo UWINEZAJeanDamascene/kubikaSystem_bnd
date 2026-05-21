@@ -71,11 +71,14 @@ class ExcelFormatter {
       });
     }
 
-    // Apply auto-filter
-    if (data.length > 0) {
+    // Apply auto-filter across all exported columns.
+    if (data.length > 0 && columns.length > 0) {
+      const headerRow = title ? 2 : 1;
+      const lastDataRow = headerRow + data.length;
+      const lastColumn = worksheet.getColumn(columns.length).letter;
       worksheet.autoFilter = {
-        from: title ? 'A2' : 'A1',
-        to: title ? `A${data.length + 1}` : `A${data.length}`
+        from: `A${headerRow}`,
+        to: `${lastColumn}${lastDataRow}`
       };
     }
 
@@ -147,6 +150,14 @@ class ExcelFormatter {
         });
         worksheet.addRow(rowData);
       });
+
+      if (sheetData.data.length > 0) {
+        const lastColumn = worksheet.getColumn(sheetData.columns.length).letter;
+        worksheet.autoFilter = {
+          from: 'A1',
+          to: `${lastColumn}${sheetData.data.length + 1}`
+        };
+      }
     }
 
     const buffer = await workbook.xlsx.writeBuffer();

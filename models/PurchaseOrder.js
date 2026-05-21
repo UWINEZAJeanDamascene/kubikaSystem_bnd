@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const { generateUniqueNumber } = require('./utils/autoIncrement');
+const ebmSubmissionSchema = require('./schemas/ebmSubmissionSchema');
 
 const poLineSchema = new mongoose.Schema({
   product: { type: mongoose.Schema.Types.ObjectId, ref: 'Product', required: true },
@@ -56,12 +57,14 @@ const purchaseOrderSchema = new mongoose.Schema({
   approvedAt: Date,
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   freight: { type: freightEstimateSchema, default: () => ({}) },
-  lines: [poLineSchema]
+  lines: [poLineSchema],
+  ebm: { type: ebmSubmissionSchema, default: () => ({}) }
 }, { timestamps: true });
 
 purchaseOrderSchema.index({ company: 1, referenceNo: 1 }, { unique: true });
 purchaseOrderSchema.index({ company: 1, status: 1 });
 purchaseOrderSchema.index({ company: 1, status: 1, orderDate: 1 });
+purchaseOrderSchema.index({ company: 1, 'ebm.ebmStatus': 1 });
 purchaseOrderSchema.index(
   { company: 1, source: 1, status: 1, autoReorderProduct: 1 },
   { partialFilterExpression: { source: 'AUTO', status: 'draft' } }

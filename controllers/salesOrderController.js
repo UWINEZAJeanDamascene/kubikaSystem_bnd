@@ -5,6 +5,7 @@ const Warehouse = require('../models/Warehouse');
 const Company = require('../models/Company');
 const mongoose = require('mongoose');
 const emailService = require('../services/emailService');
+const EBMProductService = require('../services/ebmProductService');
 
 const sendSOEmail = async (so, action, companyId) => {
   try {
@@ -143,6 +144,7 @@ exports.createSalesOrder = async (req, res, next) => {
     }
     
     // Validate and process lines
+    await EBMProductService.assertProductsRegistered(companyId, (lines || []).map((line) => line.product));
     const processedLines = [];
     for (const line of lines || []) {
       const product = await Product.findOne({ _id: line.product, company: companyId });

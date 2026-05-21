@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const ebmSubmissionSchema = require('./schemas/ebmSubmissionSchema');
 
 const cashTransactionSchema = new mongoose.Schema({
   type: { type: String, enum: ['sale', 'refund', 'cash_in', 'cash_out'], required: true },
@@ -7,7 +8,8 @@ const cashTransactionSchema = new mongoose.Schema({
   reference: String,
   notes: String,
   recordedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-  timestamp: { type: Date, default: Date.now }
+  timestamp: { type: Date, default: Date.now },
+  ebm: { type: ebmSubmissionSchema, default: () => ({}) }
 });
 
 const cashDrawerSchema = new mongoose.Schema({

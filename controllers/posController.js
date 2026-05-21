@@ -8,6 +8,8 @@ const Company = require('../models/Company');
 const { BankAccount } = require('../models/BankAccount');
 const JournalService = require('../services/journalService');
 const emailService = require('../services/emailService');
+const EBMProductService = require('../services/ebmProductService');
+const EBMSalesService = require('../services/ebmSalesService');
 
 const sendPOSEmail = async (invoice, company, client, action = 'created') => {
   try {
@@ -50,6 +52,7 @@ exports.createSale = async (req, res, next) => {
     if (!items || items.length === 0) {
       return res.status(400).json({ success: false, message: 'No items in sale' });
     }
+    await EBMProductService.assertProductsRegistered(companyId, items.map((item) => item.product));
 
     // Resolve or create walk-in client
     let client = null;
@@ -286,7 +289,20 @@ exports.createSale = async (req, res, next) => {
       if (!ok) console.warn('[POS Email] Email not sent for invoice:', invoice.invoiceNumber || invoice._id);
     }
 
-    res.status(201).json({ success: true, data: invoice });
+    let responseInvoice = invoice;
+    try {
+      responseInvoice = await EBMSalesService.markPending(invoice._id, companyId);
+      if (!responseInvoice) responseInvoice = invoice;
+    } catch (ebmPendingErr) {
+      console.warn('Failed to mark POS sale as EBM pending', ebmPendingErr.message);
+    }
+
+    res.status(201).json({ success: true, data: responseInvoice });
+
+    EBMSalesService.submitInvoiceAsync(invoice._id, {
+      companyId,
+      userId: req.user.id,
+    });
   } catch (error) {
     next(error);
   }
@@ -453,7 +469,12 @@ exports.getReceipt = async (req, res, next) => {
 
     if (!invoice) return res.status(404).json({ success: false, message: 'Sale not found' });
 
-    res.json({ success: true, data: invoice });
+    const data = invoice.toObject({ virtuals: true });
+    data.ebm = data.ebm || {};
+    data.ebm.rcptNoDisplay = data.ebm.rcptNo || (data.ebm.ebmStatus === 'pending' ? 'Pending RRA' : 'N/A');
+    data.ebm.rcptSignDisplay = data.ebm.rcptSign || (data.ebm.ebmStatus === 'pending' ? 'Pending' : 'N/A');
+
+    res.json({ success: true, data });
   } catch (error) {
     next(error);
   }

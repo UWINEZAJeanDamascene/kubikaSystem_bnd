@@ -62,6 +62,7 @@ const userSchema = new mongoose.Schema({
   roles: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Role' }],
   // Department-based access
   department: { type: mongoose.Schema.Types.ObjectId, ref: 'Department' },
+  branch: { type: mongoose.Schema.Types.ObjectId, ref: 'Warehouse', default: null },
   isActive: {
     type: Boolean,
     default: true

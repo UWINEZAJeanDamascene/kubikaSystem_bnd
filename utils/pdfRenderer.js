@@ -124,17 +124,18 @@ function renderDataTable(doc, options = {}) {
   }
   
   // Render header row
-  doc.rect(leftMargin - 5, doc.y - 2, availableWidth + 10, 25).fill(headerBgColor);
+  let headerY = doc.y;
+  doc.rect(leftMargin - 5, headerY - 2, availableWidth + 10, 25).fill(headerBgColor);
   doc.fillColor(headerTextColor).fontSize(headerFontSize).font('Helvetica-Bold');
   
   let x = leftMargin;
   headers.forEach((header, i) => {
     const alignment = alignments[i] || 'left';
-    doc.text(header, x, doc.y + 3, { width: calculatedWidths[i], align: alignment });
+    doc.text(header, x, headerY + 3, { width: calculatedWidths[i], align: alignment });
     x += calculatedWidths[i];
   });
   
-  doc.moveDown(1);
+  doc.y = headerY + 28;
   doc.fillColor('#000000').font('Helvetica').fontSize(rowFontSize);
   
   // Render data rows
@@ -143,45 +144,56 @@ function renderDataTable(doc, options = {}) {
     if (doc.y > doc.page.height - 80) {
       doc.addPage();
       // Repeat header on new page
-      doc.rect(leftMargin - 5, doc.y - 2, availableWidth + 10, 25).fill(headerBgColor);
+      headerY = doc.y;
+      doc.rect(leftMargin - 5, headerY - 2, availableWidth + 10, 25).fill(headerBgColor);
       doc.fillColor(headerTextColor).fontSize(headerFontSize).font('Helvetica-Bold');
       x = leftMargin;
       headers.forEach((header, i) => {
         const alignment = alignments[i] || 'left';
-        doc.text(header, x, doc.y + 3, { width: calculatedWidths[i], align: alignment });
+        doc.text(header, x, headerY + 3, { width: calculatedWidths[i], align: alignment });
         x += calculatedWidths[i];
       });
-      doc.moveDown(1);
+      doc.y = headerY + 28;
       doc.fillColor('#000000').font('Helvetica').fontSize(rowFontSize);
     }
+
+    const rowY = doc.y;
     
     // Zebra striping
     if (zebraStriping && index % 2 === 0) {
-      doc.rect(leftMargin - 5, doc.y - 2, availableWidth + 10, minRowHeight).fill('#F9FAFB');
+      doc.rect(leftMargin - 5, rowY - 2, availableWidth + 10, minRowHeight).fill('#F9FAFB');
     }
     
     // Get row data
     const rowData = dataMapper ? dataMapper(item) : Object.values(item);
+    const formattedCells = rowData.map((cell, colIndex) => {
+      if (formats[colIndex] && typeof formats[colIndex] === 'function') {
+        return formats[colIndex](cell);
+      }
+      if (typeof cell === 'number') {
+        return cell.toFixed(2);
+      }
+      if (cell === null || cell === undefined || cell === '') {
+        return '-';
+      }
+      return cell;
+    });
+
+    const contentHeight = formattedCells.reduce((height, cell, colIndex) => {
+      return Math.max(
+        height,
+        doc.heightOfString(String(cell), { width: calculatedWidths[colIndex], align: alignments[colIndex] || 'left' })
+      );
+    }, minRowHeight - 6);
     
     x = leftMargin;
-    rowData.forEach((cell, colIndex) => {
+    formattedCells.forEach((formattedValue, colIndex) => {
       const alignment = alignments[colIndex] || 'left';
-      let formattedValue = cell;
-      
-      // Apply format function if provided
-      if (formats[colIndex] && typeof formats[colIndex] === 'function') {
-        formattedValue = formats[colIndex](cell);
-      } else if (typeof cell === 'number') {
-        formattedValue = cell.toFixed(2);
-      } else if (cell === null || cell === undefined) {
-        formattedValue = '-';
-      }
-      
-      doc.text(String(formattedValue), x, doc.y, { width: calculatedWidths[colIndex], align: alignment });
+      doc.text(String(formattedValue), x, rowY, { width: calculatedWidths[colIndex], align: alignment });
       x += calculatedWidths[colIndex];
     });
     
-    doc.moveDown(rowHeight);
+    doc.y = rowY + Math.max(minRowHeight, contentHeight + 6);
   });
   
   return {

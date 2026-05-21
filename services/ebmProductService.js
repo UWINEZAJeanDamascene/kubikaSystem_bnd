@@ -1,0 +1,146 @@
+const Product = require('../models/Product');
+const Warehouse = require('../models/Warehouse');
+const EBMItemClass = require('../models/EBMItemClass');
+const EBMCode = require('../models/EBMCode');
+const ebmService = require('./ebmService');
+const EBMBranchService = require('./ebmBranchService');
+
+function getEbmValue(product, canonical, legacy) {
+  return product.ebm?.[canonical] || product.ebm?.[legacy] || null;
+}
+
+function normalizeProductEbm(product) {
+  const ebm = product.ebm || {};
+  ebm.itemClassCd = ebm.itemClassCd || ebm.itemClassCode || null;
+  ebm.taxTyCd = ebm.taxTyCd || ebm.taxTypeCode || product.taxCode || null;
+  ebm.pkgUnitCd = ebm.pkgUnitCd || ebm.packagingUnitCode || null;
+  ebm.qtyUnitCd = ebm.qtyUnitCd || ebm.quantityUnitCode || product.unit || null;
+  ebm.itemClassCode = ebm.itemClassCd;
+  ebm.taxTypeCode = ebm.taxTyCd;
+  ebm.packagingUnitCode = ebm.pkgUnitCd;
+  ebm.quantityUnitCode = ebm.qtyUnitCd;
+  product.ebm = ebm;
+}
+
+async function validateProductCodes(companyId, product) {
+  normalizeProductEbm(product);
+  const itemClassCd = getEbmValue(product, 'itemClassCd', 'itemClassCode');
+  const taxTyCd = getEbmValue(product, 'taxTyCd', 'taxTypeCode');
+  const pkgUnitCd = getEbmValue(product, 'pkgUnitCd', 'packagingUnitCode');
+  const qtyUnitCd = getEbmValue(product, 'qtyUnitCd', 'quantityUnitCode');
+  const missing = [];
+  if (!itemClassCd) missing.push('itemClassCd');
+  if (!taxTyCd) missing.push('taxTyCd');
+  if (!pkgUnitCd) missing.push('pkgUnitCd');
+  if (!qtyUnitCd) missing.push('qtyUnitCd');
+  if (missing.length) throw new Error(`Missing EBM product fields: ${missing.join(', ')}`);
+
+  const [itemClass, pkgUnit, qtyUnit] = await Promise.all([
+    EBMItemClass.exists({ company: companyId, itemClassCode: itemClassCd, active: { $ne: false } }),
+    EBMCode.exists({ company: companyId, code: pkgUnitCd, active: { $ne: false } }),
+    EBMCode.exists({ company: companyId, code: qtyUnitCd, active: { $ne: false } }),
+  ]);
+
+  if (!itemClass) throw new Error(`Invalid RRA item classification code: ${itemClassCd}`);
+  if (!['A', 'B', 'C', 'D'].includes(taxTyCd)) throw new Error(`Invalid RRA tax type code: ${taxTyCd}`);
+  if (!pkgUnit) throw new Error(`Invalid RRA packaging unit code: ${pkgUnitCd}`);
+  if (!qtyUnit) throw new Error(`Invalid RRA quantity unit code: ${qtyUnitCd}`);
+}
+
+class EBMProductService {
+  static normalizeProductEbm = normalizeProductEbm;
+
+  static async registerProduct(companyId, productId, options = {}) {
+    const product = await Product.findOne({ _id: productId, company: companyId });
+    if (!product) {
+      const error = new Error('Product not found');
+      error.statusCode = 404;
+      throw error;
+    }
+
+    product.ebm = product.ebm || {};
+    product.ebm.ebmLastAttemptAt = new Date();
+
+    try {
+      await validateProductCodes(companyId, product);
+      let branch = null;
+      if (product.defaultWarehouse) {
+        branch = await Warehouse.findOne({ company: companyId, _id: product.defaultWarehouse }).lean();
+      }
+      if (!branch) branch = await Warehouse.findOne({ company: companyId, isDefault: true }).lean();
+      const branchId = branch?.rraBranchId || '00';
+      await EBMBranchService.ensureBranchRegistered({
+        companyId,
+        branchId,
+        mode: ebmService.getConfig().mode,
+      });
+
+      const itemClassCd = getEbmValue(product, 'itemClassCd', 'itemClassCode');
+      const taxTyCd = getEbmValue(product, 'taxTyCd', 'taxTypeCode');
+      const pkgUnitCd = getEbmValue(product, 'pkgUnitCd', 'packagingUnitCode');
+      const qtyUnitCd = getEbmValue(product, 'qtyUnitCd', 'quantityUnitCode');
+      const itemCode = product.ebm.ebmItemCode || product.sku;
+
+      await ebmService.saveItems({
+        companyId,
+        tin: options.tin,
+        bhfId: branchId,
+        itemCd: itemCode,
+        itemClsCd: itemClassCd,
+        itemTyCd: '2',
+        itemNm: product.name,
+        orgnNatCd: 'RW',
+        pkgUnitCd,
+        qtyUnitCd,
+        taxTyCd,
+        dftPrc: Number(product.sellingPrice || 0),
+        useYn: product.isActive === false ? 'N' : 'Y',
+      });
+
+      product.ebm.isRegisteredWithEBM = true;
+      product.ebm.registeredWithRra = true;
+      product.ebm.ebmRegisteredAt = new Date();
+      product.ebm.registeredAt = product.ebm.ebmRegisteredAt;
+      product.ebm.ebmRegistrationError = null;
+      product.ebm.ebmItemCode = itemCode;
+      await product.save();
+      return product;
+    } catch (error) {
+      product.ebm.isRegisteredWithEBM = false;
+      product.ebm.registeredWithRra = false;
+      product.ebm.ebmRegistrationError = error.message || 'Product EBM registration failed';
+      await product.save().catch(() => {});
+      throw error;
+    }
+  }
+
+  static registerProductInBackground(companyId, productId) {
+    this.registerProduct(companyId, productId).catch((err) => {
+      console.error(`[EBMProduct] Background registration failed for ${productId}:`, err.message);
+    });
+  }
+
+  static async assertProductsRegistered(companyId, productIds) {
+    const ids = [...new Set((productIds || []).filter(Boolean).map(String))];
+    if (!ids.length) return;
+    const unregistered = await Product.find({
+      company: companyId,
+      _id: { $in: ids },
+      $or: [
+        { 'ebm.isRegisteredWithEBM': { $ne: true } },
+        { 'ebm.ebmRegistrationError': { $ne: null } },
+      ],
+    }).select('name sku ebm').lean();
+
+    if (unregistered.length) {
+      const names = unregistered.map((product) => `${product.name} (${product.sku})`).join(', ');
+      const error = new Error(`The following products are not registered with RRA EBM and cannot be used on EBM documents: ${names}`);
+      error.statusCode = 422;
+      error.code = 'EBM_PRODUCTS_NOT_REGISTERED';
+      error.products = unregistered;
+      throw error;
+    }
+  }
+}
+
+module.exports = EBMProductService;

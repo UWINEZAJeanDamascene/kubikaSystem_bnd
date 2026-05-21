@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const ebmSubmissionSchema = require('./schemas/ebmSubmissionSchema');
 
 const grnLineSchema = new mongoose.Schema({
   purchaseOrderLine: { type: mongoose.Schema.Types.ObjectId, ref: 'PurchaseOrder.lines' },
@@ -53,10 +54,14 @@ const grnSchema = new mongoose.Schema({
   confirmedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   confirmedAt: Date,
   freight: { type: freightDetailSchema, default: () => ({}) },
+  ebmImportReference: { type: String, default: null, trim: true, index: true },
+  ebmImportedItem: { type: mongoose.Schema.Types.ObjectId, ref: 'EBMImportedItem', default: null },
+  ebm: { type: ebmSubmissionSchema, default: () => ({}) },
   lines: [grnLineSchema]
 }, { timestamps: true });
 
 grnSchema.index({ company: 1, referenceNo: 1 }, { unique: true });
+grnSchema.index({ company: 1, 'ebm.ebmStatus': 1 });
 
 // Ensure supplierInvoiceNo is auto-generated when missing (model-level fallback)
 grnSchema.pre('validate', async function(next) {

@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const { generateUniqueNumber } = require('./utils/autoIncrement');
+const ebmSubmissionSchema = require('./schemas/ebmSubmissionSchema');
 
 const decimalDefault = (s) => () => mongoose.Types.Decimal128.fromString(s);
 
@@ -225,6 +226,7 @@ const purchaseSchema = new mongoose.Schema({
   cancelledDate: Date,
   cancelledBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   cancellationReason: String,
+  ebm: { type: ebmSubmissionSchema, default: () => ({}) },
 }, {
   timestamps: true
 });
@@ -237,6 +239,7 @@ purchaseSchema.index({ company: 1 });
 purchaseSchema.index({ company: 1, status: 1 });
 purchaseSchema.index({ company: 1, purchaseDate: 1 });
 purchaseSchema.index({ company: 1, supplier: 1 });
+purchaseSchema.index({ company: 1, 'ebm.ebmStatus': 1 });
 purchaseSchema.index({ 'payments.paidDate': 1 });
 
 // Auto-generate purchase number

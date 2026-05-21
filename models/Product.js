@@ -63,7 +63,6 @@ const productSchema = new mongoose.Schema({
   unit: {
     type: String,
     required: [true, 'Please provide a unit of measurement'],
-    enum: ['kg', 'g', 'pcs', 'box', 'm', 'm²', 'm³', 'l', 'ml', 'ton', 'bag', 'roll', 'sheet', 'set'],
     default: 'pcs'
   },
   supplier: {
@@ -184,12 +183,28 @@ const productSchema = new mongoose.Schema({
   // Tax settings: product-level default tax code and rate
   taxCode: {
     type: String,
-    enum: ['A', 'B', 'None'],
     default: 'A'
   },
   taxRate: {
     type: mongoose.Schema.Types.Decimal128,
     default: mongoose.Types.Decimal128.fromString('0.000000')
+  },
+  ebm: {
+    itemClassCd: { type: String, trim: true, default: null },
+    taxTyCd: { type: String, trim: true, enum: ['A', 'B', 'C', 'D', null], default: null },
+    pkgUnitCd: { type: String, trim: true, default: null },
+    qtyUnitCd: { type: String, trim: true, default: null },
+    isRegisteredWithEBM: { type: Boolean, default: false },
+    ebmRegisteredAt: { type: Date, default: null },
+    ebmLastAttemptAt: { type: Date, default: null },
+    ebmRegistrationError: { type: String, trim: true, default: null },
+    ebmItemCode: { type: String, trim: true, default: null },
+    registeredWithRra: { type: Boolean, default: false },
+    registeredAt: { type: Date, default: null },
+    itemClassCode: { type: String, trim: true, default: null },
+    taxTypeCode: { type: String, trim: true, default: null },
+    packagingUnitCode: { type: String, trim: true, default: null },
+    quantityUnitCode: { type: String, trim: true, default: null }
   },
   history: [productHistorySchema],
   createdBy: {

@@ -11,7 +11,8 @@ const {
   getProductHistory,
   getProductLifecycle,
   getLowStockProducts,
-  checkLowStockAndNotify
+  checkLowStockAndNotify,
+  registerProductWithEBM
 } = require('../controllers/productController');
 const { protect } = require('../middleware/auth');
 const { requirePermission } = require('../middleware/rbacMiddleware');
@@ -38,6 +39,7 @@ router.route('/:id')
 
 router.put('/:id/archive', requirePermission('products', 'delete'), logAction('product'), archiveProduct);
 router.put('/:id/restore', requirePermission('products', 'update'), logAction('product'), restoreProduct);
+router.post('/:id/ebm/register', requirePermission('products', 'update'), logAction('product'), registerProductWithEBM);
 router.get('/:id/history', requirePermission('products', 'read'), getProductHistory);
 router.get('/:id/lifecycle', requirePermission('products', 'read'), getProductLifecycle);
 // Barcode and QR code endpoints

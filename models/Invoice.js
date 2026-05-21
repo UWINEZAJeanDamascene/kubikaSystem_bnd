@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const { generateUniqueNumber } = require('./utils/autoIncrement');
+const ebmSubmissionSchema = require('./schemas/ebmSubmissionSchema');
 
 // Invoice line item schema - matches Module 6 sales_invoice_lines table
 const invoiceLineSchema = new mongoose.Schema({
@@ -357,7 +358,12 @@ const invoiceSchema = new mongoose.Schema({
     creditNoteNumber: String,
     amount: { type: Number, default: 0 },
     appliedDate: { type: Date, default: Date.now }
-  }]
+  }],
+
+  ebm: {
+    type: ebmSubmissionSchema,
+    default: () => ({}),
+  }
 }, {
   timestamps: true,
   toJSON: { 
@@ -433,6 +439,7 @@ invoiceSchema.index({ company: 1, status: 1, dueDate: 1 });
 invoiceSchema.index({ company: 1, paidDate: 1 });
 invoiceSchema.index({ company: 1, invoiceDate: 1 });
 invoiceSchema.index({ company: 1, client: 1, status: 1 });
+invoiceSchema.index({ company: 1, 'ebm.ebmStatus': 1 });
 invoiceSchema.index({ 'payments.paidDate': 1 });
 invoiceSchema.index({ client: 1 });
 invoiceSchema.index({ createdBy: 1 });
