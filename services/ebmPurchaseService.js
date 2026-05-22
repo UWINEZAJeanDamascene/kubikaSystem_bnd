@@ -86,6 +86,7 @@ function normalizePurchaseSale(raw, companyId, branchId) {
     supplierTin,
     supplierName: raw.spplrNm || raw.supplierName || raw.splrNm || null,
     sellerInvoiceNo,
+    purchaseOrderCode: raw.prcOrdCd || raw.purchaseOrderCode || null,
     invoiceDate: parseVsdcDate(raw.pchsDt || raw.salesDt || raw.invcDt || raw.rcptDt),
     totalAmount,
     taxAmount,
@@ -159,6 +160,7 @@ async function markMatched(match, purchaseSale) {
   match.doc.ebm = match.doc.ebm || {};
   match.doc.ebm.ebmPurchaseData = purchaseSale.raw;
   match.doc.ebm.ebmPurchaseSalesInvcNo = purchaseSale.sellerInvoiceNo;
+  match.doc.ebm.prcOrdCd = purchaseSale.purchaseOrderCode || purchaseSale.raw?.prcOrdCd || null;
   match.doc.ebm.ebmPurchaseMatchStatus = 'matched';
   match.doc.ebm.ebmStatus = 'pending';
   match.doc.ebm.lastError = null;
@@ -193,6 +195,7 @@ function buildPurchaseConfirmationPayload(doc, company, branchId) {
     spplrTin: raw.spplrTin || raw.supplierTin || raw.splrTin || raw.sellerTin,
     spplrNm: raw.spplrNm || raw.supplierName || raw.splrNm,
     spplrInvcNo: sellerInvoiceNo,
+    prcOrdCd: raw.prcOrdCd || doc.ebm?.prcOrdCd || doc.purchaseOrderCode || doc.purchaseCode || '',
     invcNo: sellerInvoiceNo,
     pchsTyCd: raw.pchsTyCd || raw.salesTyCd || 'N',
     rcptTyCd: raw.rcptTyCd || 'P',
@@ -274,6 +277,7 @@ class EBMPurchaseService {
         tin: device.tin,
         bhfId: branchId,
         lastReqDt,
+        ...(options.prcOrdCd || options.purchaseOrderCode ? { prcOrdCd: options.prcOrdCd || options.purchaseOrderCode } : {}),
       });
       const sales = asArray(response.data?.saleList || response.data?.pchsList || response.data?.purchaseList);
       let matched = 0;

@@ -10,6 +10,13 @@ const JournalService = require('../services/journalService');
 const emailService = require('../services/emailService');
 const EBMProductService = require('../services/ebmProductService');
 const EBMSalesService = require('../services/ebmSalesService');
+const {
+  extractPayloadTotals,
+  formatRwf,
+  generateQrPng,
+  lineTaxDetails,
+  taxTypeLabel,
+} = require('../utils/pdfUtils');
 
 const sendPOSEmail = async (invoice, company, client, action = 'created') => {
   try {
@@ -465,14 +472,64 @@ exports.getReceipt = async (req, res, next) => {
     const invoice = await Invoice.findOne({ _id: req.params.id, company: companyId })
       .populate('client', 'name contact code')
       .populate('createdBy', 'name email')
-      .populate('items.product', 'name sku');
+      .populate('lines.product', 'name sku unit ebm');
 
     if (!invoice) return res.status(404).json({ success: false, message: 'Sale not found' });
 
+    const company = await Company.findById(companyId).lean();
+    const qrPng = await generateQrPng(invoice.ebm, { width: 110 });
     const data = invoice.toObject({ virtuals: true });
     data.ebm = data.ebm || {};
-    data.ebm.rcptNoDisplay = data.ebm.rcptNo || (data.ebm.ebmStatus === 'pending' ? 'Pending RRA' : 'N/A');
-    data.ebm.rcptSignDisplay = data.ebm.rcptSign || (data.ebm.ebmStatus === 'pending' ? 'Pending' : 'N/A');
+    const ebmStatus = data.ebm.ebmStatus || 'not_submitted';
+    const placeholder = ebmStatus === 'failed' ? 'Not Certified' : 'Pending';
+    data.companyReceipt = {
+      name: company?.name || 'Company',
+      tin: company?.tax_identification_number || company?.registration_number || '',
+      address: typeof company?.address === 'string'
+        ? company.address
+        : [company?.address?.street, company?.address?.city, company?.address?.country].filter(Boolean).join(', '),
+      phone: company?.phone || '',
+    };
+    data.receiptPrintedAt = new Date();
+    data.receiptLines = (data.items || data.lines || []).map((line) => {
+      const tax = lineTaxDetails(line);
+      return {
+        itemName: line.product?.name || line.productName || line.description || 'Item',
+        quantity: line.quantity || line.qty || 0,
+        unit: line.unit || line.product?.unit || '',
+        unitPriceRwf: formatRwf(line.unitPrice),
+        taxType: tax.taxTyCd,
+        taxTypeLabel: tax.taxTypeLabel,
+        taxableAmountRwf: formatRwf(tax.taxableAmount),
+        vatAmountRwf: formatRwf(tax.vatAmount),
+        lineTotalRwf: formatRwf(tax.lineTotal),
+      };
+    });
+    const totals = extractPayloadTotals(data.ebm, data);
+    data.rraTotals = {
+      taxableByType: ['A', 'B', 'C', 'D']
+        .map((code) => ({ code, label: taxTypeLabel(code), amount: totals[`taxblAmt${code}`], amountRwf: formatRwf(totals[`taxblAmt${code}`]) }))
+        .filter((row) => Math.round(Math.abs(row.amount)) !== 0),
+      totalTaxableAmountRwf: formatRwf(totals.totTaxblAmt),
+      totalVatRwf: formatRwf(totals.totTaxAmt),
+      grandTotalRwf: formatRwf(totals.totAmt),
+    };
+    data.paymentReceipt = {
+      methods: (data.payments || []).map((payment) => ({
+        method: String(payment.paymentMethod || 'cash').replace(/_/g, ' '),
+        amountRwf: formatRwf(payment.amount),
+        reference: payment.reference || null,
+      })),
+      amountPaidRwf: formatRwf(data.amountPaid),
+      changeGivenRwf: formatRwf(Math.max(0, Number(data.amountPaid || 0) - Number(data.grandTotal || data.totalAmount || 0))),
+    };
+    data.ebm.rcptNoDisplay = data.ebm.rcptNo || (ebmStatus === 'pending' ? 'Pending RRA' : placeholder);
+    data.ebm.rcptDtDisplay = data.ebm.rcptDt || placeholder;
+    data.ebm.intrlDataDisplay = data.ebm.intrlData || placeholder;
+    data.ebm.rcptSignDisplay = data.ebm.rcptSign || placeholder;
+    data.ebm.qrCodeDataUrl = qrPng ? `data:image/png;base64,${qrPng.toString('base64')}` : null;
+    data.ebm.qrPlaceholder = qrPng ? null : (ebmStatus === 'failed' ? 'Not Certified' : 'QR Pending');
+    data.customerTinDisplay = data.customerTin || data.client?.taxId || null;
 
     res.json({ success: true, data });
   } catch (error) {

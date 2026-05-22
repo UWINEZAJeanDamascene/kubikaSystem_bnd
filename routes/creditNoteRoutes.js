@@ -22,6 +22,8 @@ router.route('/:id')
   .put(controller.updateCreditNote)
   .delete(controller.deleteCreditNote);
 
+router.get('/:id/pdf', controller.generateCreditNotePDF);
+
 // Module 8: Confirm credit note - triggers dual journal reversal + stock return
 router.post('/:id/confirm', controller.confirmCreditNote);
 

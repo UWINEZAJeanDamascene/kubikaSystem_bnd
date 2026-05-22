@@ -1,0 +1,296 @@
+{
+  "success": true,
+  "data": {
+    "_id": "6a10d8d3d58fca6fb01fa417",
+    "company": "6a10d8d2d58fca6fb01fa348",
+    "client": {
+      "contact": {
+        "address": "KN 3 Rd, Kigali"
+      },
+      "_id": "6a10d8d2d58fca6fb01fa371",
+      "name": "Rwanda Buyer Ltd",
+      "code": "RBL",
+      "id": "6a10d8d2d58fca6fb01fa371"
+    },
+    "customerName": "Walk-in Customer",
+    "salesOrder": null,
+    "deliveryNote": null,
+    "status": "partially_paid",
+    "currencyCode": "RWF",
+    "exchangeRate": 1,
+    "lines": [
+      {
+        "product": {
+          "ebm": {
+            "itemClassCd": "43211500",
+            "taxTyCd": "B",
+            "pkgUnitCd": "NT",
+            "qtyUnitCd": "U",
+            "isRegisteredWithEBM": true,
+            "ebmRegisteredAt": "2026-05-22T22:29:38.965Z",
+            "ebmItemCode": "RW1NTXU0000001",
+            "ebmLastAttemptAt": null,
+            "ebmRegistrationError": null,
+            "registeredWithRra": false,
+            "registeredAt": null,
+            "itemClassCode": null,
+            "taxTypeCode": null,
+            "packagingUnitCode": null,
+            "quantityUnitCode": null
+          },
+          "_id": "6a10d8d2d58fca6fb01fa3b1",
+          "name": "Supplier laptop computers",
+          "sku": "LAP-001",
+          "unit": "pcs",
+          "averageCost": {
+            "$numberDecimal": "0.00"
+          },
+          "sellingPrice": {
+            "$numberDecimal": "0.00"
+          },
+          "isLowStock": true,
+          "availableStock": 0,
+          "cost": 0,
+          "avgCost": 0,
+          "id": "6a10d8d2d58fca6fb01fa3b1"
+        },
+        "productName": "Supplier laptop computers",
+        "productCode": "LAP-001",
+        "qty": 1,
+        "unit": "pcs",
+        "unitPrice": 1180000,
+        "discountPct": 0,
+        "taxRate": 18,
+        "taxCode": "B",
+        "lineSubtotal": 1180000,
+        "lineTax": 212400,
+        "lineTotal": 1392400,
+        "unitCost": 0,
+        "cogsAmount": 0,
+        "qtyCredited": 0,
+        "_id": "6a10d8d3d58fca6fb01fa418",
+        "lineId": "6a10d8d3d58fca6fb01fa419",
+        "quantity": 1,
+        "discount": 0,
+        "subtotal": 1180000,
+        "taxAmount": 212400,
+        "totalWithTax": 1392400,
+        "itemCode": "LAP-001",
+        "id": "6a10d8d3d58fca6fb01fa418"
+      }
+    ],
+    "taxAmount": 212400,
+    "subtotal": 1180000,
+    "totalAmount": 1392400,
+    "totalAEx": 0,
+    "totalB18": 1180000,
+    "totalTaxA": 0,
+    "totalTaxB": 212400,
+    "totalDiscount": 0,
+    "roundedAmount": 1392400,
+    "discount": 0,
+    "total": 1392400,
+    "amountPaid": 1180000,
+    "amountOutstanding": 212400,
+    "payments": [
+      {
+        "amount": 1180000,
+        "paymentMethod": "cash",
+        "reference": "CASH-001",
+        "recordedBy": "6a10d8d2d58fca6fb01fa36f",
+        "_id": "6a10d8d3d58fca6fb01fa41a",
+        "paidDate": "2026-05-22T22:29:39.017Z",
+        "id": "6a10d8d3d58fca6fb01fa41a"
+      }
+    ],
+    "invoiceDate": "2026-05-23T10:15:00.000Z",
+    "dueDate": "2026-05-23T10:15:00.000Z",
+    "stockDeducted": false,
+    "stockReserved": false,
+    "createdBy": null,
+    "badDebtWrittenOff": false,
+    "reversedFromBadDebt": false,
+    "autoConfirm": false,
+    "ebm": {
+      "rcptSign": null,
+      "intrlData": null,
+      "rcptNo": null,
+      "rcptDt": null,
+      "orgRcptNo": null,
+      "rfdRsnCd": null,
+      "prcOrdCd": null,
+      "rcptTyCd": null,
+      "pmtTyCd": null,
+      "salesTyCd": null,
+      "cfmDt": null,
+      "submittedAt": null,
+      "ebmStatus": "pending",
+      "retryCount": 0,
+      "lastError": null,
+      "qrCode": null,
+      "salesPayload": {
+        "taxblAmtA": 0,
+        "taxblAmtB": 1000000,
+        "taxblAmtC": 0,
+        "taxblAmtD": 0,
+        "taxAmtA": 0,
+        "taxAmtB": 180000,
+        "taxAmtC": 0,
+        "taxAmtD": 0,
+        "totTaxblAmt": 1000000,
+        "totTaxAmt": 180000,
+        "totAmt": 1180000,
+        "itemList": [
+          {
+            "itemSeq": 1,
+            "itemCd": "LAP-001",
+            "itemClsCd": "43211500",
+            "itemNm": "Supplier laptop computers",
+            "pkgUnitCd": "NT",
+            "qtyUnitCd": "U",
+            "qty": 1,
+            "prc": 1180000,
+            "taxTyCd": "B",
+            "taxblAmt": 1000000,
+            "taxAmt": 180000,
+            "totAmt": 1180000
+          }
+        ]
+      },
+      "ebmPurchaseData": null,
+      "ebmConfirmedAt": null,
+      "ebmPurchaseSalesInvcNo": null,
+      "ebmPurchaseMatchStatus": "unmatched",
+      "stockStatus": "not_submitted",
+      "stockSubmittedAt": null,
+      "stockRetryCount": 0,
+      "stockLastError": null,
+      "rcptNoDisplay": "Pending RRA",
+      "rcptDtDisplay": "Pending",
+      "intrlDataDisplay": "Pending",
+      "rcptSignDisplay": "Pending",
+      "qrCodeDataUrl": null,
+      "qrPlaceholder": "QR Pending"
+    },
+    "creditNotes": [],
+    "createdAt": "2026-05-22T22:29:39.018Z",
+    "updatedAt": "2026-05-22T22:29:39.018Z",
+    "referenceNo": "INV-2024-00002",
+    "__v": 0,
+    "invoiceNumber": "INV-2024-00002",
+    "currency": "RWF",
+    "items": [
+      {
+        "product": {
+          "ebm": {
+            "itemClassCd": "43211500",
+            "taxTyCd": "B",
+            "pkgUnitCd": "NT",
+            "qtyUnitCd": "U",
+            "isRegisteredWithEBM": true,
+            "ebmRegisteredAt": "2026-05-22T22:29:38.965Z",
+            "ebmItemCode": "RW1NTXU0000001",
+            "ebmLastAttemptAt": null,
+            "ebmRegistrationError": null,
+            "registeredWithRra": false,
+            "registeredAt": null,
+            "itemClassCode": null,
+            "taxTypeCode": null,
+            "packagingUnitCode": null,
+            "quantityUnitCode": null
+          },
+          "_id": "6a10d8d2d58fca6fb01fa3b1",
+          "name": "Supplier laptop computers",
+          "sku": "LAP-001",
+          "unit": "pcs",
+          "averageCost": {
+            "$numberDecimal": "0.00"
+          },
+          "sellingPrice": {
+            "$numberDecimal": "0.00"
+          },
+          "isLowStock": true,
+          "availableStock": 0,
+          "cost": 0,
+          "avgCost": 0,
+          "id": "6a10d8d2d58fca6fb01fa3b1"
+        },
+        "productName": "Supplier laptop computers",
+        "productCode": "LAP-001",
+        "qty": 1,
+        "unit": "pcs",
+        "unitPrice": 1180000,
+        "discountPct": 0,
+        "taxRate": 18,
+        "taxCode": "B",
+        "lineSubtotal": 1180000,
+        "lineTax": 212400,
+        "lineTotal": 1392400,
+        "unitCost": 0,
+        "cogsAmount": 0,
+        "qtyCredited": 0,
+        "_id": "6a10d8d3d58fca6fb01fa418",
+        "lineId": "6a10d8d3d58fca6fb01fa419",
+        "quantity": 1,
+        "discount": 0,
+        "subtotal": 1180000,
+        "taxAmount": 212400,
+        "totalWithTax": 1392400,
+        "itemCode": "LAP-001",
+        "id": "6a10d8d3d58fca6fb01fa418"
+      }
+    ],
+    "totalTax": {
+      "$numberDecimal": "212400"
+    },
+    "grandTotal": 1392400,
+    "balance": 212400,
+    "date": "2026-05-23T10:15:00.000Z",
+    "id": "6a10d8d3d58fca6fb01fa417",
+    "companyReceipt": {
+      "name": "Mock Kigali Trading Ltd",
+      "tin": "999991130",
+      "address": "KG 4 Ave, Kigali, Rwanda",
+      "phone": "0780000000"
+    },
+    "receiptPrintedAt": "2026-05-22T22:29:39.174Z",
+    "receiptLines": [
+      {
+        "itemName": "Supplier laptop computers",
+        "quantity": 1,
+        "unit": "pcs",
+        "unitPriceRwf": "RWF 1,180,000",
+        "taxType": "B",
+        "taxTypeLabel": "B (VAT 18%)",
+        "taxableAmountRwf": "RWF 1,180,000",
+        "vatAmountRwf": "RWF 212,400",
+        "lineTotalRwf": "RWF 1,392,400"
+      }
+    ],
+    "rraTotals": {
+      "taxableByType": [
+        {
+          "code": "B",
+          "label": "B (VAT 18%)",
+          "amount": 1000000,
+          "amountRwf": "RWF 1,000,000"
+        }
+      ],
+      "totalTaxableAmountRwf": "RWF 1,000,000",
+      "totalVatRwf": "RWF 180,000",
+      "grandTotalRwf": "RWF 1,180,000"
+    },
+    "paymentReceipt": {
+      "methods": [
+        {
+          "method": "cash",
+          "amountRwf": "RWF 1,180,000",
+          "reference": "CASH-001"
+        }
+      ],
+      "amountPaidRwf": "RWF 1,180,000",
+      "changeGivenRwf": "RWF 0"
+    },
+    "customerTinDisplay": null
+  }
+}

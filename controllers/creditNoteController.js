@@ -11,6 +11,15 @@ const emailService = require("../services/emailService");
 const { BankAccount } = require("../models/BankAccount");
 const { DEFAULT_ACCOUNTS } = require("../constants/chartOfAccounts");
 const EBMSalesService = require("../services/ebmSalesService");
+const PDFDocument = require("pdfkit");
+const EBMCode = require("../models/EBMCode");
+const {
+  drawEbmCertificationBlock,
+  drawTaxBreakdown,
+  formatRwf,
+  generateQrPng,
+  lineTaxDetails,
+} = require("../utils/pdfUtils");
 
 const sendCreditNoteEmail = async (note, company, client, action) => {
   try {
@@ -167,6 +176,148 @@ exports.getCreditNote = async (req, res, next) => {
     if (!note)
       return res.status(404).json({ success: false, message: "Not found" });
     res.json({ success: true, data: note });
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.generateCreditNotePDF = async (req, res, next) => {
+  try {
+    const companyId = req.user.company._id;
+    const note = await CreditNote.findOne({ _id: req.params.id, company: companyId })
+      .populate("invoice")
+      .populate("client")
+      .populate("lines.product")
+      .populate("items.product")
+      .populate("createdBy");
+
+    if (!note) return res.status(404).json({ success: false, message: "Credit note not found" });
+
+    const company = await Company.findById(companyId).lean();
+    const refundCode = note.ebm?.rfdRsnCd || note.ebm?.refundRsnCd;
+    const refundReason = refundCode
+      ? await EBMCode.findOne({ company: companyId, code: refundCode, active: true }).lean()
+      : null;
+    const qrPng = await generateQrPng(note.ebm, { width: 110 });
+    const originalInvoice = note.invoice || {};
+    const lineArray = note.lines?.length ? note.lines : note.items || [];
+
+    const fmtDate = (value, withTime = false) => {
+      if (!value) return "N/A";
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return "N/A";
+      return new Intl.DateTimeFormat("en-GB", {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+        ...(withTime ? { hour: "2-digit", minute: "2-digit", hour12: false } : {}),
+      }).format(date);
+    };
+    const formatAddress = (address) => {
+      if (!address) return "";
+      if (typeof address === "string") return address;
+      return [address.street, address.city, address.state, address.country, address.postcode].filter(Boolean).join(", ");
+    };
+
+    const doc = new PDFDocument({ margin: 50, size: "A4", bufferPages: true });
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename=credit-note-${note.referenceNo || note.creditNoteNumber}.pdf`);
+    doc.pipe(res);
+
+    doc.fillColor("#111827").font("Helvetica-Bold").fontSize(22).text(company?.name || "Company", 50, 48);
+    doc.font("Helvetica").fontSize(9).fillColor("#6b7280");
+    let cy = 74;
+    const companyAddress = formatAddress(company?.address);
+    if (companyAddress) {
+      doc.text(companyAddress, 50, cy, { width: 260 });
+      cy += 12;
+    }
+    const tin = company?.tax_identification_number || company?.registration_number;
+    if (tin) doc.text(`TIN: ${String(tin).replace(/\D/g, "").slice(0, 9)}`, 50, cy);
+
+    doc.font("Helvetica-Bold").fontSize(26).fillColor("#991b1b").text("CREDIT NOTE", 0, 50, { align: "right" });
+    doc.font("Helvetica").fontSize(10).fillColor("#6b7280").text(`# ${note.referenceNo || note.creditNoteNumber}`, 0, 82, { align: "right" });
+    doc.moveTo(50, 120).lineTo(doc.page.width - 50, 120).strokeColor("#e5e7eb").stroke();
+
+    doc.rect(50, 140, 230, 112).fillAndStroke("#ffffff", "#e5e7eb");
+    doc.font("Helvetica-Bold").fontSize(10).fillColor("#374151").text("CREDIT NOTE DETAILS", 60, 150);
+    doc.font("Helvetica").fontSize(9).fillColor("#111827");
+    doc.text(`Credit Note No: ${note.referenceNo || note.creditNoteNumber}`, 60, 170, { width: 205 });
+    doc.text(`Credit Date: ${fmtDate(note.creditDate)}`, 60, 186, { width: 205 });
+    doc.text(`Invoice No: ${originalInvoice.referenceNo || originalInvoice.invoiceNumber || note.relatedInvoice || "N/A"}`, 60, 202, { width: 205 });
+    doc.text(`Original RRA Receipt No: ${note.ebm?.orgRcptNo || originalInvoice.ebm?.rcptNo || "N/A"}`, 60, 218, { width: 205 });
+    doc.text(`Refund Reason: ${refundReason?.description || refundReason?.name || refundCode || note.reason}`, 60, 234, { width: 205 });
+
+    doc.rect(300, 140, 250, 112).fillAndStroke("#ffffff", "#e5e7eb");
+    doc.font("Helvetica-Bold").fontSize(10).fillColor("#374151").text("CUSTOMER", 310, 150);
+    doc.font("Helvetica").fontSize(10).fillColor("#111827").text(note.client?.name || "N/A", 310, 172, { width: 220 });
+    doc.fontSize(9).fillColor("#6b7280");
+    const customerTin = note.clientTIN || note.client?.taxId || originalInvoice.customerTin;
+    doc.text(customerTin ? `Customer TIN: ${customerTin}` : "Individual", 310, 190, { width: 220 });
+    const clientAddress = note.client?.contact?.address || originalInvoice.customerAddress;
+    if (clientAddress) doc.text(clientAddress, 310, 206, { width: 220 });
+    doc.text(`Issued against Invoice No: ${originalInvoice.referenceNo || originalInvoice.invoiceNumber || "N/A"}`, 310, 232, { width: 220 });
+
+    let y = 278;
+    doc.rect(50, y, doc.page.width - 100, 28).fill("#111827");
+    doc.fillColor("#ffffff").font("Helvetica-Bold").fontSize(9);
+    doc.text("#", 56, y + 8);
+    doc.text("Returned Item / Tax Details", 80, y + 8);
+    doc.text("Qty", 318, y + 8, { width: 35, align: "right" });
+    doc.text("Unit Price", 365, y + 8, { width: 70, align: "right" });
+    doc.text("VAT", 445, y + 8, { width: 55, align: "right" });
+    doc.text("Refunded", 508, y + 8, { width: 72, align: "right" });
+    y += 38;
+
+    lineArray.forEach((line, index) => {
+      if (y > doc.page.height - 190) {
+        doc.addPage();
+        y = 70;
+      }
+      const tax = lineTaxDetails(line);
+      if (index % 2 === 0) doc.rect(50, y - 6, doc.page.width - 100, 40).fill("#f9fafb");
+      doc.fillColor("#111827").font("Helvetica").fontSize(9);
+      doc.text(String(index + 1), 56, y);
+      doc.text(line.product?.name || line.productName || "Item", 80, y, { width: 220 });
+      doc.fontSize(7).fillColor("#6b7280");
+      doc.text(`Class: ${tax.itemClassCd}  Tax Type: ${tax.taxTypeLabel}  Taxable: ${formatRwf(-tax.taxableAmount)}`, 80, y + 12, { width: 240 });
+      doc.fontSize(9).fillColor("#111827");
+      doc.text(String(line.quantity || 0), 318, y, { width: 35, align: "right" });
+      doc.text(formatRwf(line.unitPrice), 365, y, { width: 70, align: "right" });
+      doc.text(formatRwf(-tax.vatAmount), 445, y, { width: 55, align: "right" });
+      doc.text(formatRwf(-tax.lineTotal), 508, y, { width: 72, align: "right" });
+      y += 44;
+    });
+
+    if (y > doc.page.height - 290) {
+      doc.addPage();
+      y = 70;
+    }
+    const totalsY = drawTaxBreakdown(doc, {
+      x: doc.page.width - 310,
+      y,
+      width: 260,
+      ebm: note.ebm || {},
+      fallback: note.toObject ? note.toObject({ virtuals: true }) : note,
+      title: "AMOUNT REFUNDED",
+      negative: true,
+    });
+
+    y = Math.max(totalsY + 24, y + 180);
+    if (y > doc.page.height - 170) {
+      doc.addPage();
+      y = 70;
+    }
+    drawEbmCertificationBlock(doc, {
+      y,
+      ebm: note.ebm || {},
+      qrPng,
+      title: "RRA EBM CERTIFICATION - CREDIT NOTE",
+      receiptDateFormatter: (value) => fmtDate(value, true),
+      originalReceiptNo: note.ebm?.orgRcptNo || originalInvoice.ebm?.rcptNo || null,
+    });
+
+    doc.end();
   } catch (err) {
     next(err);
   }

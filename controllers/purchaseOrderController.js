@@ -203,10 +203,11 @@ exports.cancelPurchaseOrder = async (req, res, next) => {
 exports.getPurchaseOrders = async (req, res, next) => {
   try {
     const companyId = req.user.company._id;
-    const { supplier_id, status, date_from, date_to, search } = req.query;
+    const { supplier_id, status, ebmPurchaseMatchStatus, date_from, date_to, search } = req.query;
     const q = { company: companyId };
     if (supplier_id) q.supplier = supplier_id;
     if (status) q.status = status;
+    if (ebmPurchaseMatchStatus) q["ebm.ebmPurchaseMatchStatus"] = ebmPurchaseMatchStatus;
     if (date_from || date_to) q.orderDate = {};
     if (date_from) q.orderDate.$gte = new Date(date_from);
     if (date_to) q.orderDate.$lte = new Date(date_to);

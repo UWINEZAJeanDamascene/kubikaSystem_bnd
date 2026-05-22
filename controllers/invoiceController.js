@@ -8,7 +8,6 @@ const InvoiceReceiptMetadata = require("../models/InvoiceReceiptMetadata");
 const ARReceipt = require("../models/ARReceipt");
 const ARReceiptAllocation = require("../models/ARReceiptAllocation");
 const PDFDocument = require("pdfkit");
-const QRCode = require("qrcode");
 const notificationService = require("../services/notificationHelper");
 const emailService = require("../services/emailService");
 const Company = require("../models/Company");
@@ -19,6 +18,13 @@ const { runInTransaction } = require("../services/transactionService");
 const { DEFAULT_ACCOUNTS } = require("../constants/chartOfAccounts");
 const EBMProductService = require("../services/ebmProductService");
 const EBMSalesService = require("../services/ebmSalesService");
+const {
+  drawEbmCertificationBlock,
+  drawTaxBreakdown,
+  formatRwf,
+  generateQrPng,
+  lineTaxDetails,
+} = require("../utils/pdfUtils");
 
 const {
   notifyInvoiceCreated,
@@ -42,6 +48,7 @@ exports.getInvoices = async (req, res, next) => {
       endDate,
       date_from,
       date_to,
+      ebmStatus,
       expiry_before,
       quotation_id,
     } = req.query;
@@ -71,6 +78,10 @@ exports.getInvoices = async (req, res, next) => {
 
     if (clientId) {
       query.client = clientId;
+    }
+
+    if (ebmStatus) {
+      query["ebm.ebmStatus"] = ebmStatus;
     }
 
     // Date filters - Module 6 naming
@@ -1892,9 +1903,7 @@ exports.generateInvoicePDF = async (req, res, next) => {
     // Get company info
     const company = await Company.findById(companyId);
 
-    const qrPng = invoice.ebm?.qrCode
-      ? await QRCode.toBuffer(invoice.ebm.qrCode, { margin: 1, width: 90 })
-      : null;
+    const qrPng = await generateQrPng(invoice.ebm, { width: 110 });
 
     // Create PDF document with more breathable layout
     const doc = new PDFDocument({ margin: 50, size: "A4", bufferPages: true });
@@ -2076,30 +2085,12 @@ exports.generateInvoicePDF = async (req, res, next) => {
     };
 
     const drawRraDetails = (startY) => {
-      const ebm = invoice.ebm || {};
-      const status = ebm.ebmStatus || "not_submitted";
-      const receiptNo = status === "submitted"
-        ? (ebm.rcptNo || "N/A")
-        : status === "pending"
-          ? "Pending RRA Certification"
-          : status === "failed"
-            ? "RRA Certification Failed - Contact Administrator"
-            : "Not submitted to RRA";
-      doc.rect(50, startY, doc.page.width - 100, 112).fillAndStroke("#f8fafc", "#94a3b8");
-      doc.fillColor("#111827").fontSize(10).font("Helvetica-Bold");
-      doc.text("RRA EBM CERTIFICATION", 60, startY + 8);
-      doc.font("Helvetica").fontSize(8).fillColor("#475569");
-      doc.text(`RRA Receipt No: ${receiptNo}`, 60, startY + 28, { width: 300 });
-      doc.text(`Receipt Date: ${fmtDate(ebm.rcptDt, true)}`, 60, startY + 42, { width: 300 });
-      doc.text(`Internal Data: ${ebm.intrlData || "Pending"}`, 60, startY + 56, { width: 300 });
-      doc.text(`Receipt Signature: ${ebm.rcptSign || "Pending"}`, 60, startY + 70, { width: 360 });
-      doc.text("Scan to verify at: verify.rra.gov.rw", 60, startY + 96, { width: 300 });
-      if (qrPng) {
-        doc.image(qrPng, doc.page.width - 135, startY + 24, { width: 62, height: 62 });
-      } else {
-        doc.rect(doc.page.width - 135, startY + 24, 62, 62).stroke("#d1d5db");
-        doc.fillColor("#64748b").fontSize(7).text("QR pending", doc.page.width - 130, startY + 50, { width: 52, align: "center" });
-      }
+      return drawEbmCertificationBlock(doc, {
+        y: startY,
+        ebm: invoice.ebm || {},
+        qrPng,
+        receiptDateFormatter: (value) => fmtDate(value, true),
+      });
     };
 
     // Table header renderer (callable on new pages)
@@ -2127,7 +2118,7 @@ exports.generateInvoicePDF = async (req, res, next) => {
     drawRraDetails(firstContentY + 90);
 
     // Table
-    let y = firstContentY + 220;
+    let y = firstContentY + 244;
     tableHeader(y);
     y += 36;
     doc.font("Helvetica").fontSize(9).fillColor("#111827");
@@ -2135,7 +2126,7 @@ exports.generateInvoicePDF = async (req, res, next) => {
     // Rows with automatic page breaks and repeated header
     invoice.items.forEach((item, idx) => {
       // Page break if low space
-      if (y > doc.page.height - 150) {
+      if (y > doc.page.height - 160) {
         // footer for the page
         drawFooter(pageNumber);
         doc.addPage();
@@ -2154,27 +2145,25 @@ exports.generateInvoicePDF = async (req, res, next) => {
       }
 
       const productName = item.product?.name || item.description || "N/A";
-      const itemClass = item.product?.ebm?.itemClassCd || item.product?.ebm?.itemClassCode || "N/A";
-      const taxType = item.product?.ebm?.taxTyCd || item.product?.ebm?.taxTypeCode || item.taxCode || "A";
-      const lineTaxable = Math.max(0, Number(item.totalWithTax || item.lineTotal || 0) - Number(item.taxAmount || item.lineTax || 0));
-      const lineVat = Number(item.taxAmount || item.lineTax || 0);
+      const tax = lineTaxDetails(item);
       doc.fillColor("#111827");
       doc.text(`${idx + 1}`, 56, y);
       doc.text(productName, 80, y, { width: 230 });
       doc.fontSize(7).fillColor("#6b7280");
-      doc.text(`Class: ${itemClass}  TaxTy: ${taxType}  Taxable: ${fmt(lineTaxable)}  VAT: ${fmt(lineVat)}`, 80, y + 11, { width: 230 });
+      doc.text(`Class: ${tax.itemClassCd}  Tax Type: ${tax.taxTypeLabel}`, 80, y + 11, { width: 230 });
+      doc.text(`Taxable: ${formatRwf(tax.taxableAmount)}  VAT: ${formatRwf(tax.vatAmount)}`, 80, y + 22, { width: 230 });
       doc.fontSize(9).fillColor("#111827");
       doc.text((item.quantity || 0).toString(), 320, y, {
         width: 40,
         align: "right",
       });
       doc.text(fmt(item.unitPrice), 370, y, { width: 70, align: "right" });
-      doc.text(`${item.taxCode || "A"} (${item.taxRate}%)`, 450, y, {
+      doc.text(tax.taxTypeLabel, 450, y, {
         width: 50,
         align: "right",
       });
-      doc.text(fmt(item.totalWithTax), 510, y, { width: 70, align: "right" });
-      y += 34;
+      doc.text(formatRwf(tax.lineTotal), 510, y, { width: 70, align: "right" });
+      y += 44;
     });
 
     // Draw totals block (ensure space)
@@ -2186,57 +2175,14 @@ exports.generateInvoicePDF = async (req, res, next) => {
       y = 140;
     }
 
-    const totalsX = doc.page.width - 260;
-    doc
-      .rect(totalsX - 10, y, 230, 110)
-      .fill("#ffffff")
-      .stroke("#e5e7eb");
-    let ty = y + 8;
-    doc.fillColor("#6b7280").fontSize(10).font("Helvetica");
-    doc.text("Subtotal", totalsX, ty, { width: 140, align: "left" });
-    doc.fillColor("#111827").text(fmt(invoice.subtotal), totalsX + 100, ty, {
-      width: 120,
-      align: "right",
-    });
-    ty += 18;
-
-    if (invoice.totalDiscount > 0) {
-      doc.fillColor("#10b981").text("Discount", totalsX, ty);
-      doc
-        .fillColor("#10b981")
-        .text(`- ${fmt(invoice.totalDiscount)}`, totalsX + 100, ty, {
-          width: 120,
-          align: "right",
-        });
-      ty += 18;
-    }
-
-    doc.fillColor("#6b7280").text("Tax", totalsX, ty);
-    doc.fillColor("#111827").text(fmt(invoice.totalTax), totalsX + 100, ty, {
-      width: 120,
-      align: "right",
-    });
-    ty += 18;
-
-    if (invoice.roundedAmount && invoice.roundedAmount !== invoice.grandTotal) {
-      doc.fillColor("#6b7280").text("Rounded", totalsX, ty);
-      doc
-        .fillColor("#111827")
-        .text(fmt(invoice.roundedAmount), totalsX + 100, ty, {
-          width: 120,
-          align: "right",
-        });
-      ty += 18;
-    }
-
-    doc.rect(totalsX - 10, ty - 6, 230, 40).fill("#111827");
-    doc.fillColor("#ffffff").fontSize(12).font("Helvetica-Bold");
-    doc.text("GRAND TOTAL", totalsX, ty, { width: 140, align: "left" });
-    doc.text(fmt(invoice.grandTotal), totalsX + 100, ty + 2, {
-      width: 120,
-      align: "right",
-    });
-    ty += 52;
+    const totalsX = doc.page.width - 300;
+    let ty = drawTaxBreakdown(doc, {
+      x: totalsX,
+      y,
+      width: 250,
+      ebm: invoice.ebm || {},
+      fallback: invoice.toObject ? invoice.toObject({ virtuals: true }) : invoice,
+    }) + 8;
 
     if (invoice.amountPaid > 0) {
       doc.fillColor("#10b981").fontSize(10).font("Helvetica");
@@ -2256,7 +2202,7 @@ exports.generateInvoicePDF = async (req, res, next) => {
     }
 
     // Payment history
-    y += 130;
+    y = ty + 18;
     if (invoice.payments && invoice.payments.length > 0) {
       if (y > doc.page.height - 120) {
         drawFooter(pageNumber);

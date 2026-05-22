@@ -869,6 +869,7 @@ exports.listGRNs = async (req, res, next) => {
     const {
       supplier_id,
       status,
+      ebmStatus,
       date_from,
       date_to,
       page = 1,
@@ -879,6 +880,7 @@ exports.listGRNs = async (req, res, next) => {
 
     if (supplier_id) query.supplier = supplier_id;
     if (status) query.status = status;
+    if (ebmStatus) query["ebm.ebmStatus"] = ebmStatus;
     if (date_from || date_to) {
       query.receivedDate = {};
       if (date_from) query.receivedDate.$gte = new Date(date_from);

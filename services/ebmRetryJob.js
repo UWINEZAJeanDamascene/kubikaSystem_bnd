@@ -30,9 +30,17 @@ async function updateSourceDocument(queueRecord, response = null, status = 'subm
       'ebm.rcptNo': data.rcptNo != null ? String(data.rcptNo) : null,
       'ebm.rcptDt': rcptDt,
       'ebm.qrCode': [data.rcptSign, data.intrlData, data.rcptNo, rcptDt].filter(Boolean).join('|'),
+      'ebm.salesPayload': queueRecord.payload,
       'ebm.submittedAt': now,
       'ebm.ebmStatus': 'submitted',
       'ebm.lastError': null,
+      ...(queueRecord.payload?.orgRcptNo ? { 'ebm.orgRcptNo': queueRecord.payload.orgRcptNo } : {}),
+      ...(queueRecord.payload?.rfdRsnCd ? { 'ebm.rfdRsnCd': queueRecord.payload.rfdRsnCd } : {}),
+      ...(queueRecord.payload?.rcptTyCd ? { 'ebm.rcptTyCd': queueRecord.payload.rcptTyCd } : {}),
+      ...(queueRecord.payload?.pmtTyCd ? { 'ebm.pmtTyCd': queueRecord.payload.pmtTyCd } : {}),
+      ...(queueRecord.payload?.salesTyCd ? { 'ebm.salesTyCd': queueRecord.payload.salesTyCd } : {}),
+      ...(queueRecord.payload?.cfmDt ? { 'ebm.cfmDt': queueRecord.payload.cfmDt } : {}),
+      ...(queueRecord.payload?.prcOrdCd ? { 'ebm.prcOrdCd': queueRecord.payload.prcOrdCd } : {}),
     });
   } else if (queueRecord.endpoint === ebmService.VSDC_ENDPOINTS.SAVE_PURCHASES && status === 'submitted') {
     Object.assign(update, {

@@ -52,6 +52,7 @@ exports.getPurchases = async (req, res, next) => {
       page = 1,
       limit = 20,
       status,
+      ebmPurchaseMatchStatus,
       supplierId,
       startDate,
       endDate,
@@ -60,6 +61,10 @@ exports.getPurchases = async (req, res, next) => {
 
     if (status) {
       query.status = status;
+    }
+
+    if (ebmPurchaseMatchStatus) {
+      query["ebm.ebmPurchaseMatchStatus"] = ebmPurchaseMatchStatus;
     }
 
     if (supplierId) {

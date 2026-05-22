@@ -11,6 +11,20 @@ const RESULT_CODES = Object.freeze({
   SUCCESS: '000',
 });
 
+const NON_RETRYABLE_RESULT_CODES = new Set([
+  '881',
+  '882',
+  '883',
+  '884',
+]);
+
+const RESULT_CODE_DETAILS = Object.freeze({
+  881: 'Purchase is mandatory',
+  882: 'Purchase code is invalid',
+  883: 'Purchase already used',
+  884: 'Invalid customer TIN was provided',
+});
+
 const DEFAULTS = Object.freeze({
   mode: EBM_MODES.MOCK,
   vsdcBaseUrl: 'http://localhost:8080/vsdc',
@@ -138,6 +152,11 @@ function makeSuccessResponse(data = null, resultDt = formatVsdcDateTime()) {
   };
 }
 
+function isRetryableResultCode(resultCd) {
+  if (NON_RETRYABLE_RESULT_CODES.has(String(resultCd))) return false;
+  return false;
+}
+
 function normalizeAxiosError(error, mode, endpoint, payload) {
   const status = error.response && error.response.status;
   const response = error.response && error.response.data;
@@ -162,15 +181,16 @@ function normalizeVsdcResponse(raw, mode, endpoint, payload) {
   const resultCd = response.resultCd;
 
   if (resultCd !== RESULT_CODES.SUCCESS) {
+    const codeDescription = RESULT_CODE_DETAILS[resultCd];
     throw new EBMServiceError(
-      `VSDC returned ${resultCd || 'an unknown result code'} for ${endpoint}: ${response.resultMsg || 'No message'}`,
+      `VSDC returned ${resultCd || 'an unknown result code'} for ${endpoint}: ${response.resultMsg || codeDescription || 'No message'}`,
       {
         code: 'EBM_VSDC_REJECTED',
         mode,
         endpoint,
         response,
         payload,
-        retryable: false,
+        retryable: isRetryableResultCode(resultCd),
       },
     );
   }
@@ -715,6 +735,8 @@ module.exports.EBMService = EBMService;
 module.exports.EBMServiceError = EBMServiceError;
 module.exports.EBM_MODES = EBM_MODES;
 module.exports.RESULT_CODES = RESULT_CODES;
+module.exports.NON_RETRYABLE_RESULT_CODES = NON_RETRYABLE_RESULT_CODES;
+module.exports.isRetryableResultCode = isRetryableResultCode;
 module.exports.VSDC_ENDPOINTS = VSDC_ENDPOINTS;
 module.exports.formatVsdcDate = formatVsdcDate;
 module.exports.formatVsdcDateTime = formatVsdcDateTime;

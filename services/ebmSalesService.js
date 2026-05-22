@@ -70,6 +70,17 @@ function getCustomerTin(invoice) {
   return invoice.customerTin || invoice.client?.taxId || invoice.client?.tin || invoice.client?.tax_identification_number || '';
 }
 
+function getPurchaseOrderCode(invoice) {
+  return String(
+    invoice.prcOrdCd
+    || invoice.purchaseOrderCode
+    || invoice.purchaseCode
+    || invoice.lpoNumber
+    || invoice.lpoNo
+    || '',
+  ).trim();
+}
+
 async function resolveRefundReasonCode(companyId, requestedCode = null) {
   if (requestedCode) return requestedCode;
   return findCode(companyId, {
@@ -330,6 +341,7 @@ async function buildSalesTrnPayload(invoice, company, branch) {
     bhfId: branch.rraBranchId,
     invcNo: String(getInvoiceNumber(invoice)),
     orgInvcNo: invoice.originalInvoiceNo || invoice.orgInvcNo || 0,
+    prcOrdCd: getPurchaseOrderCode(invoice),
     custTin: getCustomerTin(invoice),
     custNm: getCustomerName(invoice),
     rcptTyCd: headerCodes.rcptTyCd,
@@ -430,6 +442,8 @@ async function applySuccess(invoiceId, companyId, response, payload) {
         'ebm.pmtTyCd': payload.pmtTyCd,
         'ebm.salesTyCd': payload.salesTyCd,
         'ebm.cfmDt': payload.cfmDt,
+        'ebm.prcOrdCd': payload.prcOrdCd || null,
+        'ebm.salesPayload': payload,
       },
     },
     { new: true },
@@ -449,6 +463,8 @@ async function applyFailure(invoiceId, companyId, error, payload = null) {
           'ebm.pmtTyCd': payload.pmtTyCd,
           'ebm.salesTyCd': payload.salesTyCd,
           'ebm.cfmDt': payload.cfmDt,
+          'ebm.prcOrdCd': payload.prcOrdCd || null,
+          'ebm.salesPayload': payload,
         } : {}),
       },
       $inc: { 'ebm.retryCount': 1 },
@@ -503,6 +519,7 @@ async function applyCreditNoteSuccess(noteId, companyId, response, payload) {
         'ebm.cfmDt': payload.cfmDt,
         'ebm.orgRcptNo': payload.orgRcptNo,
         'ebm.rfdRsnCd': payload.rfdRsnCd,
+        'ebm.salesPayload': payload,
       },
     },
     { new: true },
@@ -524,6 +541,7 @@ async function applyCreditNoteFailure(noteId, companyId, error, payload = null) 
           'ebm.cfmDt': payload.cfmDt,
           'ebm.orgRcptNo': payload.orgRcptNo,
           'ebm.rfdRsnCd': payload.rfdRsnCd,
+          'ebm.salesPayload': payload,
         } : {}),
       },
       $inc: { 'ebm.retryCount': 1 },
