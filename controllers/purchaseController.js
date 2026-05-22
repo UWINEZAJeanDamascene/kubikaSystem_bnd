@@ -17,6 +17,8 @@ const inventoryService = require("../services/inventoryService");
 const emailService = require("../services/emailService");
 const mongoose = require("mongoose");
 const { runInTransaction } = require("../services/transactionService");
+const EBMPurchaseService = require("../services/ebmPurchaseService");
+const EBMStockService = require("../services/ebmStockService");
 
 const sendPurchaseEmail = async (purchase, action, companyId) => {
   try {
@@ -628,10 +630,25 @@ exports.receivePurchase = async (req, res, next) => {
       await sendPurchaseEmail(purchase, 'received', companyId);
     }
 
+    let responsePurchase = purchase;
+    try {
+      responsePurchase = await EBMPurchaseService.processPurchaseDocument(companyId, purchase, "Purchase", {
+        branchId: req.body.branchId || req.body.bhfId,
+      });
+      if (responsePurchase?.ebm?.ebmStatus !== "failed") {
+        await EBMStockService.submitStockForDirectPurchase(purchase._id, {
+          companyId,
+          branchId: req.body.branchId || req.body.bhfId,
+        });
+      }
+    } catch (ebmErr) {
+      console.error("EBM direct purchase pull/confirmation or stock reporting failed after receiving purchase:", ebmErr.message);
+    }
+
     res.json({
       success: true,
       message: "Purchase received and stock added",
-      data: purchase,
+      data: responsePurchase || purchase,
     });
   } catch (error) {
     next(error);

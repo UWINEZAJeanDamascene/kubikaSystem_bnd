@@ -17,7 +17,7 @@ const ebmSyncStateSchema = new mongoose.Schema({
   syncType: {
     type: String,
     required: true,
-    enum: ['standard_codes', 'item_classes', 'tins', 'branches', 'notices', 'imported_items'],
+    enum: ['standard_codes', 'item_classes', 'tins', 'branches', 'notices', 'imported_items', 'purchase_sales'],
     index: true,
   },
   lastReqDt: {

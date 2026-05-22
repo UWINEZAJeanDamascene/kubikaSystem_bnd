@@ -110,6 +110,8 @@ async function initializeServer() {
   require('./models/EBMNotice');
   require('./models/EBMSyncState');
   require('./models/EBMImportedItem');
+  require('./models/EBMUnmatchedPurchase');
+  require('./models/EBMSubmissionQueue');
   require('./models/SalesOrder');
    require('./models/PickPack');
    require('./models/ARTransactionLedger');
@@ -456,6 +458,20 @@ async function initializeServer() {
       startImportSyncScheduler();
     } catch (err) {
       console.warn('Could not start EBM import sync scheduler', err);
+    }
+
+    try {
+      const { startPurchaseSyncScheduler } = require('./services/ebmPurchaseSyncScheduler');
+      startPurchaseSyncScheduler();
+    } catch (err) {
+      console.warn('Could not start EBM purchase sync scheduler', err);
+    }
+
+    try {
+      const { startRetryJob } = require('./services/ebmRetryJob');
+      startRetryJob();
+    } catch (err) {
+      console.warn('Could not start EBM retry job', err);
     }
 
     // Start report scheduler (snapshot generation for weekly/monthly/quarterly/etc.)

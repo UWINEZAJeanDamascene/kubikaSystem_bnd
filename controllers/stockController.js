@@ -6,6 +6,7 @@ const Warehouse = require('../models/Warehouse');
 const InventoryBatch = require('../models/InventoryBatch');
 const JournalService = require('../services/journalService');
 const { runInTransaction } = require('../services/transactionService');
+const EBMStockService = require('../services/ebmStockService');
 
 // @desc    Get all stock movements
 // @route   GET /api/stock/movements
@@ -381,6 +382,13 @@ exports.adjustStock = async (req, res, next) => {
       }
 
       return movement;
+    });
+
+    EBMStockService.submitStockAdjustment(result._id, {
+      companyId,
+      branchId: req.body.branchId || req.body.bhfId,
+    }).catch((ebmErr) => {
+      console.error('EBM stock adjustment submission failed:', ebmErr.message);
     });
 
     res.status(201).json({

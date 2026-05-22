@@ -1,11 +1,13 @@
 const Invoice = require('../models/Invoice');
+const CreditNote = require('../models/CreditNote');
 const Company = require('../models/Company');
 const Warehouse = require('../models/Warehouse');
 const EBMCode = require('../models/EBMCode');
 require('../models/Client');
 require('../models/Product');
 const ebmService = require('./ebmService');
-const { formatVsdcDateTime } = require('./ebmService');
+const EBMQueueService = require('./ebmQueueService');
+const { formatVsdcDateTime, VSDC_ENDPOINTS } = require('./ebmService');
 
 const SUCCESS_RESULT = '000';
 
@@ -37,7 +39,7 @@ function getTin(company) {
 }
 
 function getInvoiceNumber(invoice) {
-  return invoice.referenceNo || invoice.invoiceNumber || invoice._id;
+  return invoice.referenceNo || invoice.invoiceNumber || invoice.creditNoteNumber || invoice._id;
 }
 
 function getInvoiceLines(invoice) {
@@ -66,6 +68,15 @@ function getProductCode(line) {
 
 function getCustomerTin(invoice) {
   return invoice.customerTin || invoice.client?.taxId || invoice.client?.tin || invoice.client?.tax_identification_number || '';
+}
+
+async function resolveRefundReasonCode(companyId, requestedCode = null) {
+  if (requestedCode) return requestedCode;
+  return findCode(companyId, {
+    className: 'refund',
+    namePatterns: ['refund', 'wrong', 'other'],
+    requiredFor: 'refund reason',
+  });
 }
 
 function getCustomerName(invoice) {
@@ -130,6 +141,16 @@ async function resolveHeaderCodes(invoice, companyId) {
     currencyTyCd: currencyCode,
     saleCtyCd: countryCode,
   };
+}
+
+async function resolveRefundHeaderCodes(note, companyId) {
+  const base = await resolveHeaderCodes(note, companyId);
+  base.rcptTyCd = await findCode(companyId, {
+    className: 'receipt',
+    namePatterns: ['refund'],
+    requiredFor: 'refund receipt type',
+  });
+  return base;
 }
 
 async function resolvePaymentCode(invoice, companyId, paymentMethod = null) {
@@ -340,6 +361,32 @@ async function buildSalesTrnPayload(invoice, company, branch) {
   };
 }
 
+async function buildRefundPayload(note, originalInvoice, company, branch, options = {}) {
+  if (!originalInvoice?.ebm?.rcptNo || originalInvoice.ebm.ebmStatus !== 'submitted') {
+    const status = originalInvoice?.ebm?.ebmStatus || 'not_submitted';
+    const error = new Error(
+      status === 'pending'
+        ? 'Original invoice EBM submission is still pending. Wait for it to complete before submitting a refund.'
+        : 'Original invoice has not been submitted to RRA. Submit the original invoice before processing an EBM refund.',
+    );
+    error.code = 'EBM_ORIGINAL_INVOICE_NOT_SUBMITTED';
+    error.retryable = false;
+    throw error;
+  }
+
+  const payload = await buildSalesTrnPayload(note, company, branch);
+  const headerCodes = await resolveRefundHeaderCodes(note, note.company || company._id);
+  const refundReasonCode = await resolveRefundReasonCode(note.company || company._id, options.refundRsnCd || note.ebm?.rfdRsnCd || note.ebm?.refundRsnCd);
+  payload.rcptTyCd = headerCodes.rcptTyCd;
+  payload.pmtTyCd = headerCodes.pmtTyCd;
+  payload.salesTyCd = headerCodes.salesTyCd;
+  payload.orgInvcNo = String(getInvoiceNumber(originalInvoice));
+  payload.orgRcptNo = String(originalInvoice.ebm.rcptNo);
+  payload.rfdRsnCd = refundReasonCode;
+  payload.remark = note.reason || note.notes || 'Refund after sale';
+  return payload;
+}
+
 async function markPending(invoiceId, companyId) {
   return Invoice.findOneAndUpdate(
     {
@@ -410,6 +457,144 @@ async function applyFailure(invoiceId, companyId, error, payload = null) {
   ).populate('client lines.product createdBy');
 }
 
+async function markCreditNotePending(noteId, companyId, extra = {}) {
+  return CreditNote.findOneAndUpdate(
+    {
+      _id: noteId,
+      company: companyId,
+      'ebm.ebmStatus': { $ne: 'submitted' },
+    },
+    {
+      $set: {
+        'ebm.ebmStatus': 'pending',
+        'ebm.lastError': null,
+        ...extra,
+      },
+    },
+    { new: true },
+  ).populate('invoice client lines.product items.product createdBy');
+}
+
+async function applyCreditNoteSuccess(noteId, companyId, response, payload) {
+  const data = response?.data || {};
+  const rcptDt = data.rcptDt || data.vsdcRcptPbctDate || response?.resultDt || formatVsdcDateTime();
+  const qrCode = buildQrString({
+    rcptSign: data.rcptSign,
+    intrlData: data.intrlData,
+    rcptNo: data.rcptNo,
+    rcptDt,
+  });
+
+  return CreditNote.findOneAndUpdate(
+    { _id: noteId, company: companyId, 'ebm.ebmStatus': { $ne: 'submitted' } },
+    {
+      $set: {
+        'ebm.rcptSign': data.rcptSign || null,
+        'ebm.intrlData': data.intrlData || null,
+        'ebm.rcptNo': data.rcptNo != null ? String(data.rcptNo) : null,
+        'ebm.rcptDt': rcptDt,
+        'ebm.qrCode': qrCode,
+        'ebm.submittedAt': new Date(),
+        'ebm.ebmStatus': 'submitted',
+        'ebm.lastError': null,
+        'ebm.rcptTyCd': payload.rcptTyCd,
+        'ebm.pmtTyCd': payload.pmtTyCd,
+        'ebm.salesTyCd': payload.salesTyCd,
+        'ebm.cfmDt': payload.cfmDt,
+        'ebm.orgRcptNo': payload.orgRcptNo,
+        'ebm.rfdRsnCd': payload.rfdRsnCd,
+      },
+    },
+    { new: true },
+  ).populate('invoice client lines.product items.product createdBy');
+}
+
+async function applyCreditNoteFailure(noteId, companyId, error, payload = null) {
+  const status = error?.retryable === false ? 'failed' : 'pending';
+  return CreditNote.findOneAndUpdate(
+    { _id: noteId, company: companyId, 'ebm.ebmStatus': { $ne: 'submitted' } },
+    {
+      $set: {
+        'ebm.ebmStatus': status,
+        'ebm.lastError': error?.message || 'EBM refund submission failed',
+        ...(payload ? {
+          'ebm.rcptTyCd': payload.rcptTyCd,
+          'ebm.pmtTyCd': payload.pmtTyCd,
+          'ebm.salesTyCd': payload.salesTyCd,
+          'ebm.cfmDt': payload.cfmDt,
+          'ebm.orgRcptNo': payload.orgRcptNo,
+          'ebm.rfdRsnCd': payload.rfdRsnCd,
+        } : {}),
+      },
+      $inc: { 'ebm.retryCount': 1 },
+    },
+    { new: true },
+  ).populate('invoice client lines.product items.product createdBy');
+}
+
+async function submitCreditNote(noteId, { companyId, branchId = null, refundRsnCd = null } = {}) {
+  const note = await CreditNote.findOne({ _id: noteId, company: companyId })
+    .populate('invoice')
+    .populate('client')
+    .populate('lines.product')
+    .populate('items.product')
+    .populate('createdBy');
+  if (!note) {
+    const error = new Error('Credit note not found for EBM refund submission.');
+    error.code = 'EBM_CREDIT_NOTE_NOT_FOUND';
+    error.retryable = false;
+    throw error;
+  }
+  if (note.ebm?.ebmStatus === 'submitted') return note;
+
+  const originalInvoice = await Invoice.findOne({ _id: note.invoice?._id || note.invoice, company: companyId })
+    .populate('lines.product')
+    .lean();
+  const orgRcptNo = originalInvoice?.ebm?.rcptNo || null;
+  await markCreditNotePending(note._id, companyId, {
+    'ebm.orgRcptNo': orgRcptNo,
+    ...(refundRsnCd ? { 'ebm.rfdRsnCd': refundRsnCd } : {}),
+  });
+
+  const company = await Company.findById(companyId).lean();
+  const branch = await resolveBranch(note, companyId, branchId);
+  let payload = null;
+
+  try {
+    payload = await buildRefundPayload(note, originalInvoice, company, branch, { refundRsnCd });
+    const response = await ebmService.saveSales(payload);
+    if (response.resultCd !== SUCCESS_RESULT) {
+      const error = new Error(response.resultMsg || 'RRA rejected refund submission.');
+      error.response = response;
+      throw error;
+    }
+    const submitted = await applyCreditNoteSuccess(note._id, companyId, response, payload);
+    await EBMQueueService.markSubmitted({
+      companyId,
+      documentType: 'creditNote',
+      documentId: note._id,
+      endpoint: VSDC_ENDPOINTS.SAVE_SALES,
+    }).catch(() => {});
+    require('./ebmStockService').submitStockForCreditNote(note._id, { companyId, branchId })
+      .catch((stockError) => console.error('[EBMSales] Credit note stock reporting failed:', stockError.message));
+    return submitted;
+  } catch (error) {
+    const failedNote = await applyCreditNoteFailure(note._id, companyId, error, payload);
+    if (payload && error?.retryable !== false) {
+      await EBMQueueService.upsertFailure({
+        companyId,
+        documentType: 'creditNote',
+        documentId: note._id,
+        endpoint: VSDC_ENDPOINTS.SAVE_SALES,
+        payload,
+        error,
+      }).catch(() => {});
+    }
+    error.creditNote = failedNote;
+    throw error;
+  }
+}
+
 async function submitInvoice(invoiceId, { companyId, branchId = null } = {}) {
   const invoice = await Invoice.findOne({ _id: invoiceId, company: companyId })
     .populate('client')
@@ -437,9 +622,28 @@ async function submitInvoice(invoiceId, { companyId, branchId = null } = {}) {
       error.response = response;
       throw error;
     }
-    return applySuccess(invoice._id, companyId, response, payload);
+    const submitted = await applySuccess(invoice._id, companyId, response, payload);
+    await EBMQueueService.markSubmitted({
+      companyId,
+      documentType: invoice.source === 'pos' ? 'pos' : 'invoice',
+      documentId: invoice._id,
+      endpoint: VSDC_ENDPOINTS.SAVE_SALES,
+    }).catch(() => {});
+    require('./ebmStockService').submitStockForInvoice(invoice._id, { companyId, branchId })
+      .catch((stockError) => console.error('[EBMSales] Invoice stock reporting failed:', stockError.message));
+    return submitted;
   } catch (error) {
     const failedInvoice = await applyFailure(invoice._id, companyId, error, payload);
+    if (payload && error?.retryable !== false) {
+      await EBMQueueService.upsertFailure({
+        companyId,
+        documentType: invoice.source === 'pos' ? 'pos' : 'invoice',
+        documentId: invoice._id,
+        endpoint: VSDC_ENDPOINTS.SAVE_SALES,
+        payload,
+        error,
+      }).catch(() => {});
+    }
     error.invoice = failedInvoice;
     throw error;
   }
@@ -455,8 +659,11 @@ function submitInvoiceAsync(invoiceId, options = {}) {
 
 module.exports = {
   buildSalesTrnPayload,
+  buildRefundPayload,
   markPending,
+  markCreditNotePending,
   submitInvoice,
   submitInvoiceAsync,
+  submitCreditNote,
   resolveBranch,
 };

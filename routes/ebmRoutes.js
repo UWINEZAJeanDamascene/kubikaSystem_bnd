@@ -17,6 +17,9 @@ router.get('/codes/item-classes', ebmController.getItemClasses);
 router.get('/codes/tins', ebmController.searchTINs);
 router.get('/notices', ebmController.getNotices);
 router.get('/imports', ebmController.listImportedItems);
+router.get('/purchases/unmatched', ebmController.listUnmatchedPurchases);
+router.get('/queue', authorize('admin', 'stock_manager'), ebmController.listSubmissionQueue);
+router.get('/alerts', authorize('admin', 'stock_manager'), ebmController.listAlerts);
 
 router.post(
   '/codes/sync',
@@ -64,6 +67,17 @@ router.post(
 );
 
 router.post(
+  '/purchases/sync',
+  authorize('admin', 'stock_manager'),
+  body('branchId').optional({ nullable: true, checkFalsy: true }).isString().trim().isLength({ min: 1, max: 2 }),
+  body('bhfId').optional({ nullable: true, checkFalsy: true }).isString().trim().isLength({ min: 1, max: 2 }),
+  body('full').optional().isBoolean(),
+  validateRequest,
+  stripUnvalidatedBody,
+  ebmController.syncPurchases,
+);
+
+router.post(
   '/imports/:id/confirm',
   authorize('admin', 'stock_manager'),
   body('branchId').optional({ nullable: true, checkFalsy: true }).isString().trim().isLength({ min: 1, max: 2 }),
@@ -95,6 +109,46 @@ router.post(
   validateRequest,
   stripUnvalidatedBody,
   ebmController.retryImportedItemStock,
+);
+
+router.post(
+  '/queue/bulk-retry',
+  authorize('admin', 'stock_manager'),
+  body('ids').isArray({ min: 1 }).withMessage('ids must be a non-empty array'),
+  body('ids.*').isMongoId(),
+  validateRequest,
+  stripUnvalidatedBody,
+  ebmController.bulkRetryQueueItems,
+);
+
+router.get(
+  '/queue/:id',
+  authorize('admin', 'stock_manager'),
+  ebmController.getSubmissionQueueItem,
+);
+
+router.post(
+  '/queue/:id/retry',
+  authorize('admin', 'stock_manager'),
+  ebmController.retryQueueItem,
+);
+
+router.post(
+  '/queue/:id/resolve',
+  authorize('admin'),
+  ebmController.markQueueItemResolved,
+);
+
+router.post(
+  '/alerts/:id/acknowledge',
+  authorize('admin', 'stock_manager'),
+  ebmController.acknowledgeAlert,
+);
+
+router.post(
+  '/alerts/:id/reset',
+  authorize('admin', 'stock_manager'),
+  ebmController.resetAlert,
 );
 
 module.exports = router;

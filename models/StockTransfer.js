@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const ebmSubmissionSchema = require('./schemas/ebmSubmissionSchema');
 
 // Items are stored in a separate `StockTransferLine` model to preserve
 // per-line Decimal128 precision and audit history.
@@ -71,6 +72,7 @@ const stockTransferSchema = new mongoose.Schema({
     ref: 'JournalEntry',
     default: null
   },
+  ebm: { type: ebmSubmissionSchema, default: () => ({}) },
   // User who created the transfer
   createdBy: {
     type: mongoose.Schema.Types.ObjectId,

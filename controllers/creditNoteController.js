@@ -10,6 +10,7 @@ const TaxAutomationService = require("../services/taxAutomationService");
 const emailService = require("../services/emailService");
 const { BankAccount } = require("../models/BankAccount");
 const { DEFAULT_ACCOUNTS } = require("../constants/chartOfAccounts");
+const EBMSalesService = require("../services/ebmSalesService");
 
 const sendCreditNoteEmail = async (note, company, client, action) => {
   try {
@@ -391,6 +392,32 @@ exports.approveCreditNote = async (req, res, next) => {
         .status(400)
         .json({ success: false, message: "Only draft notes can be approved" });
 
+    const refundRsnCd = req.body.refundRsnCd || req.body.rfdRsnCd || note.ebm?.rfdRsnCd;
+    if (!refundRsnCd) {
+      return res.status(400).json({
+        success: false,
+        code: "ERR_EBM_REFUND_REASON_REQUIRED",
+        message: "RRA refund reason code is required before confirming this credit note.",
+      });
+    }
+
+    const originalInvoiceForEbm = await Invoice.findOne({
+      _id: note.invoice,
+      company: companyId,
+    }).select("referenceNo invoiceNumber ebm");
+    if (!originalInvoiceForEbm?.ebm?.rcptNo || originalInvoiceForEbm.ebm.ebmStatus !== "submitted") {
+      return res.status(409).json({
+        success: false,
+        code: "ERR_EBM_ORIGINAL_INVOICE_NOT_SUBMITTED",
+        message: originalInvoiceForEbm?.ebm?.ebmStatus === "pending"
+          ? "Original invoice EBM submission is still pending. Wait until it is submitted before confirming this credit note."
+          : "Original invoice has not been submitted to RRA. Submit the original invoice before confirming this credit note.",
+      });
+    }
+    note.ebm = note.ebm || {};
+    note.ebm.orgRcptNo = String(originalInvoiceForEbm.ebm.rcptNo);
+    note.ebm.rfdRsnCd = refundRsnCd;
+
     // Update client balance
     const client = await Client.findOne({
       _id: note.client,
@@ -619,7 +646,23 @@ exports.approveCreditNote = async (req, res, next) => {
       }
     }
 
-    res.json({ success: true, data: note });
+    let responseNote = note;
+    if (journalEntry) {
+      try {
+        responseNote = await EBMSalesService.submitCreditNote(note._id, {
+          companyId,
+          refundRsnCd,
+        });
+      } catch (ebmError) {
+        console.error("EBM refund submission failed after credit note confirmation:", ebmError.message);
+        responseNote = ebmError.creditNote || await CreditNote.findOne({
+          _id: note._id,
+          company: companyId,
+        }).populate("invoice client lines.product items.product createdBy");
+      }
+    }
+
+    res.json({ success: true, data: responseNote });
   } catch (err) {
     next(err);
   }

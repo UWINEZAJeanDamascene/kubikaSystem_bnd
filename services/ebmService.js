@@ -364,6 +364,7 @@ class EBMService {
             { cdCls: '09', cdClsNm: 'Refund Reason', dtlList: [
               { cd: '01', cdNm: 'Customer cancellation', cdDesc: 'Customer cancellation', useYn: 'Y' },
               { cd: '02', cdNm: 'Wrong item', cdDesc: 'Wrong item', useYn: 'Y' },
+              { cd: '06', cdNm: 'Refund', cdDesc: 'Refund', useYn: 'Y' },
             ] },
             { cdCls: '11', cdClsNm: 'Stock In Type', dtlList: [
               { cd: '01', cdNm: 'Purchase', cdDesc: 'Purchase receipt', useYn: 'Y' },
@@ -514,7 +515,66 @@ class EBMService {
         }, now);
 
       case VSDC_ENDPOINTS.SELECT_PURCHASE_SALES:
-        return makeSuccessResponse({ saleList: [] }, now);
+        return makeSuccessResponse({
+          saleList: [
+            {
+              spplrTin: '100000003',
+              spplrNm: 'KIGALI WHOLESALE LTD',
+              spplrInvcNo: `SUP-${formatVsdcDate()}-001`,
+              invcNo: `SUP-${formatVsdcDate()}-001`,
+              rcptTyCd: 'P',
+              pchsDt: formatVsdcDate(),
+              totTaxblAmt: 1000000,
+              totTaxAmt: 180000,
+              totAmt: 1180000,
+              itemList: [
+                {
+                  itemSeq: 1,
+                  itemCd: 'MOCK-PO-001',
+                  itemClsCd: '43211500',
+                  itemNm: 'Supplier laptop computers',
+                  pkgUnitCd: 'NT',
+                  qtyUnitCd: 'U',
+                  qty: 10,
+                  prc: 118000,
+                  splyAmt: 1000000,
+                  taxTyCd: 'B',
+                  taxblAmt: 1000000,
+                  taxAmt: 180000,
+                  totAmt: 1180000,
+                },
+              ],
+            },
+            {
+              spplrTin: '100000004',
+              spplrNm: 'RWANDA RETAIL GROUP',
+              spplrInvcNo: `SUP-${formatVsdcDate()}-002`,
+              invcNo: `SUP-${formatVsdcDate()}-002`,
+              rcptTyCd: 'P',
+              pchsDt: formatVsdcDate(),
+              totTaxblAmt: 75000,
+              totTaxAmt: 0,
+              totAmt: 75000,
+              itemList: [
+                {
+                  itemSeq: 1,
+                  itemCd: 'MOCK-PO-002',
+                  itemClsCd: '5059690800',
+                  itemNm: 'Exempt office supplies',
+                  pkgUnitCd: 'NT',
+                  qtyUnitCd: 'U',
+                  qty: 50,
+                  prc: 1500,
+                  splyAmt: 75000,
+                  taxTyCd: 'A',
+                  taxblAmt: 75000,
+                  taxAmt: 0,
+                  totAmt: 75000,
+                },
+              ],
+            },
+          ],
+        }, now);
 
       case VSDC_ENDPOINTS.SELECT_STOCK_ITEMS:
         return makeSuccessResponse({ stockList: [] }, now);
@@ -550,6 +610,11 @@ class EBMService {
       case VSDC_ENDPOINTS.SAVE_ITEM_COMPOSITION:
       case VSDC_ENDPOINTS.UPDATE_IMPORT_ITEMS:
       case VSDC_ENDPOINTS.SAVE_PURCHASES:
+        return makeSuccessResponse({
+          confmDt: now,
+          invcNo: payload.spplrInvcNo || payload.invcNo || payload.purchaseSalesInvcNo,
+        }, now);
+
       case VSDC_ENDPOINTS.SAVE_STOCK_ITEMS:
       case VSDC_ENDPOINTS.SAVE_STOCK_MASTER:
         return makeSuccessResponse(null, now);

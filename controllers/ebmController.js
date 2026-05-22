@@ -6,6 +6,10 @@ const EBMTIN = require('../models/EBMTIN');
 const EBMNotice = require('../models/EBMNotice');
 const EBMBranchService = require('../services/ebmBranchService');
 const EBMImportedItemService = require('../services/ebmImportedItemService');
+const EBMPurchaseService = require('../services/ebmPurchaseService');
+const EBMSubmissionQueue = require('../models/EBMSubmissionQueue');
+const EBMAlert = require('../models/EBMAlert');
+const EBMQueueService = require('../services/ebmQueueService');
 
 function getCompanyId(req) {
   return req.companyId || req.company?._id || req.user?.company?._id || req.user?.company;
@@ -238,6 +242,211 @@ exports.retryImportedItemStock = async (req, res, next) => {
       req.user,
     );
     res.json({ success: true, data: imported });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.syncPurchases = async (req, res, next) => {
+  try {
+    const companyId = getCompanyId(req);
+    const result = await EBMPurchaseService.syncPurchases(companyId, {
+      branchId: req.body.branchId || req.body.bhfId || '00',
+      full: req.body.full === true,
+    });
+    res.json({ success: true, data: result });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.listUnmatchedPurchases = async (req, res, next) => {
+  try {
+    const companyId = getCompanyId(req);
+    const purchases = await EBMPurchaseService.listUnmatched(companyId, req.query);
+    res.json({ success: true, data: purchases });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.listSubmissionQueue = async (req, res, next) => {
+  try {
+    const companyId = getCompanyId(req);
+    const filter = { companyId };
+    if (req.query.status) filter.ebmStatus = req.query.status;
+    if (!req.query.status) filter.ebmStatus = { $ne: 'submitted' };
+    if (req.query.documentType) filter.documentType = req.query.documentType;
+    if (req.query.companyId && ['platform_admin', 'superadmin'].includes(req.user?.role)) {
+      filter.companyId = req.query.companyId;
+    }
+    if (req.query.fromDate || req.query.toDate) {
+      filter.createdAt = {};
+      if (req.query.fromDate) filter.createdAt.$gte = new Date(req.query.fromDate);
+      if (req.query.toDate) filter.createdAt.$lte = new Date(req.query.toDate);
+    }
+
+    const page = Math.max(1, Number(req.query.page || 1));
+    const pageSize = Math.min(Math.max(1, Number(req.query.pageSize || req.query.limit || 20)), 100);
+    const skip = (page - 1) * pageSize;
+    const queue = await EBMSubmissionQueue.find(filter)
+      .sort({ ebmStatus: 1, nextRetryAt: 1, createdAt: -1 })
+      .skip(skip)
+      .limit(pageSize)
+      .populate('companyId', 'name code')
+      .lean();
+    const total = await EBMSubmissionQueue.countDocuments(filter);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const counts = await EBMSubmissionQueue.aggregate([
+      { $match: { companyId } },
+      { $group: { _id: '$ebmStatus', count: { $sum: 1 } } },
+    ]);
+    const submittedToday = await EBMSubmissionQueue.countDocuments({
+      companyId,
+      ebmStatus: 'submitted',
+      resolvedAt: { $gte: today },
+    });
+    const unacknowledgedAlerts = await EBMAlert.countDocuments({ companyId, acknowledged: false });
+    res.json({
+      success: true,
+      data: {
+        counts: {
+          ...counts.reduce((acc, item) => ({ ...acc, [item._id]: item.count }), {}),
+          submittedToday,
+          unacknowledgedAlerts,
+        },
+        queue,
+        records: queue,
+        pagination: { page, pageSize, total, pages: Math.ceil(total / pageSize) },
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.getSubmissionQueueItem = async (req, res, next) => {
+  try {
+    const companyId = getCompanyId(req);
+    const item = await EBMSubmissionQueue.findOne({ _id: req.params.id, companyId })
+      .populate('companyId', 'name code')
+      .lean();
+    if (!item) return res.status(404).json({ success: false, message: 'EBM queue item not found' });
+    res.json({ success: true, data: item });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.retryQueueItem = async (req, res, next) => {
+  try {
+    const companyId = getCompanyId(req);
+    const item = await EBMQueueService.resetForManualRetry(req.params.id, companyId);
+    if (!item) return res.status(404).json({ success: false, message: 'EBM queue item not found' });
+    res.json({ success: true, data: item });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.bulkRetryQueueItems = async (req, res, next) => {
+  try {
+    const companyId = getCompanyId(req);
+    const ids = Array.isArray(req.body.ids) ? req.body.ids : [];
+    const results = [];
+    for (const id of ids) {
+      try {
+        const item = await EBMQueueService.resetForManualRetry(id, companyId);
+        if (!item) {
+          results.push({ id, ok: false, message: 'Not found' });
+        } else {
+          results.push({ id, ok: true, status: item.ebmStatus });
+        }
+      } catch (error) {
+        results.push({ id, ok: false, message: error.message });
+      }
+    }
+    res.json({
+      success: true,
+      data: {
+        reset: results.filter((item) => item.ok).length,
+        failed: results.filter((item) => !item.ok),
+        results,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.markQueueItemResolved = async (req, res, next) => {
+  try {
+    const companyId = getCompanyId(req);
+    const item = await EBMSubmissionQueue.findOneAndUpdate(
+      { _id: req.params.id, companyId },
+      { $set: { ebmStatus: 'submitted', resolvedAt: new Date(), isRetryable: false } },
+      { new: true },
+    );
+    if (!item) return res.status(404).json({ success: false, message: 'EBM queue item not found' });
+    res.json({ success: true, data: item });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.listAlerts = async (req, res, next) => {
+  try {
+    const companyId = getCompanyId(req);
+    const filter = { companyId, acknowledged: false };
+    if (req.query.documentType) filter.documentType = req.query.documentType;
+    if (req.query.fromDate || req.query.toDate) {
+      filter.abandonedAt = {};
+      if (req.query.fromDate) filter.abandonedAt.$gte = new Date(req.query.fromDate);
+      if (req.query.toDate) filter.abandonedAt.$lte = new Date(req.query.toDate);
+    }
+    const alerts = await EBMAlert.find(filter).sort({ abandonedAt: -1 }).limit(200).lean();
+    res.json({ success: true, data: alerts });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.acknowledgeAlert = async (req, res, next) => {
+  try {
+    const companyId = getCompanyId(req);
+    const alert = await EBMAlert.findOneAndUpdate(
+      { _id: req.params.id, companyId },
+      {
+        $set: {
+          acknowledged: true,
+          acknowledgedAt: new Date(),
+          acknowledgedBy: req.user?._id || req.user?.id || null,
+          status: 'acknowledged',
+        },
+      },
+      { new: true },
+    );
+    if (!alert) return res.status(404).json({ success: false, message: 'EBM alert not found' });
+    res.json({ success: true, data: alert });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.resetAlert = async (req, res, next) => {
+  try {
+    const companyId = getCompanyId(req);
+    const alert = await EBMAlert.findOne({ _id: req.params.id, companyId });
+    if (!alert) return res.status(404).json({ success: false, message: 'EBM alert not found' });
+    const item = await EBMQueueService.resetForManualRetry(alert.queueId, companyId);
+    alert.status = 'reset';
+    alert.acknowledged = true;
+    alert.acknowledgedAt = alert.acknowledgedAt || new Date();
+    alert.resetAt = new Date();
+    alert.resetBy = req.user?._id || req.user?.id || null;
+    await alert.save();
+    res.json({ success: true, data: { alert, queue: item } });
   } catch (error) {
     next(error);
   }

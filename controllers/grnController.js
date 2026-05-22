@@ -14,6 +14,8 @@ const TaxAutomationService = require("../services/taxAutomationService");
 const transactionService = require("../services/transactionService");
 const cacheService = require("../services/cacheService");
 const emailService = require("../services/emailService");
+const EBMPurchaseService = require("../services/ebmPurchaseService");
+const EBMStockService = require("../services/ebmStockService");
 const DEFAULT_ACCOUNTS =
   require("../constants/chartOfAccounts").DEFAULT_ACCOUNTS;
 const StockLevel = require("../models/StockLevel");
@@ -807,6 +809,28 @@ exports.confirmGRN = async (req, res, next) => {
       await cacheService.bumpCompanyFinancialCaches(companyId);
     } catch (e) {
       console.error("Cache bump after GRN confirm failed:", e);
+    }
+
+    try {
+      const poForEbm = await PurchaseOrder.findOne({
+        _id: result.purchaseOrder,
+        company: companyId,
+      });
+      if (poForEbm) {
+        const processedPo = await EBMPurchaseService.processPurchaseDocument(companyId, poForEbm, "PurchaseOrder", {
+          branchId: req.body.branchId || req.body.bhfId,
+        });
+        if (processedPo?.ebm?.ebmStatus !== "failed") {
+          await EBMStockService.submitStockForGRN(result._id, {
+            companyId,
+            branchId: req.body.branchId || req.body.bhfId,
+          });
+        } else {
+          console.warn("Skipping GRN EBM stock reporting because purchase confirmation failed permanently.");
+        }
+      }
+    } catch (ebmErr) {
+      console.error("EBM purchase/stock processing failed after GRN confirmation:", ebmErr.message);
     }
 
     // Send email notification for confirmed GRN (await & log result)

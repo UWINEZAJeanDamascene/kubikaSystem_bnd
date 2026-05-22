@@ -5,6 +5,8 @@ const ebmSubmissionSchema = new mongoose.Schema({
   intrlData: { type: String, default: null, trim: true },
   rcptNo: { type: String, default: null, trim: true },
   rcptDt: { type: String, default: null, trim: true },
+  orgRcptNo: { type: String, default: null, trim: true },
+  rfdRsnCd: { type: String, default: null, trim: true },
   rcptTyCd: { type: String, default: null, trim: true },
   pmtTyCd: { type: String, default: null, trim: true },
   salesTyCd: { type: String, default: null, trim: true },
@@ -19,6 +21,24 @@ const ebmSubmissionSchema = new mongoose.Schema({
   retryCount: { type: Number, default: 0, min: 0 },
   lastError: { type: String, default: null, trim: true },
   qrCode: { type: String, default: null, trim: true },
+  ebmPurchaseData: { type: mongoose.Schema.Types.Mixed, default: null },
+  ebmConfirmedAt: { type: Date, default: null },
+  ebmPurchaseSalesInvcNo: { type: String, default: null, trim: true },
+  ebmPurchaseMatchStatus: {
+    type: String,
+    enum: ['unmatched', 'matched', 'confirmed', 'unconfirmable'],
+    default: 'unmatched',
+    index: true,
+  },
+  stockStatus: {
+    type: String,
+    enum: ['not_submitted', 'pending', 'submitted', 'failed'],
+    default: 'not_submitted',
+    index: true,
+  },
+  stockSubmittedAt: { type: Date, default: null },
+  stockRetryCount: { type: Number, default: 0, min: 0 },
+  stockLastError: { type: String, default: null, trim: true },
 }, { _id: false });
 
 module.exports = ebmSubmissionSchema;

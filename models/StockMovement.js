@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const ebmSubmissionSchema = require('./schemas/ebmSubmissionSchema');
 
 const stockMovementSchema = new mongoose.Schema({
   // Multi-tenancy: company reference
@@ -89,7 +90,8 @@ const stockMovementSchema = new mongoose.Schema({
   movementDate: {
     type: Date,
     default: Date.now
-  }
+  },
+  ebm: { type: ebmSubmissionSchema, default: () => ({}) }
 }, {
   timestamps: true
 });

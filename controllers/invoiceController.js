@@ -1909,7 +1909,7 @@ exports.generateInvoicePDF = async (req, res, next) => {
     // Pipe PDF to response
     doc.pipe(res);
 
-    const currency = invoice.currencyCode || invoice.currency || "RWF";
+    const currency = invoice.currencyCode || invoice.currency || company?.base_currency || "RWF";
     const currencySymbol =
       currency === "USD"
         ? "$"
@@ -1920,14 +1920,36 @@ exports.generateInvoicePDF = async (req, res, next) => {
         : currency === "LBP"
               ? "LL"
               : currency === "RWF"
-                ? "RWF"
+                ? ""
                 : "$";
 
     // Helper to format money
-    const fmt = (v) =>
-      currencySymbol
-        ? `${currencySymbol} ${Number(v || 0).toFixed(2)}`
-        : Number(v || 0).toLocaleString();
+    const fmt = (v) => {
+      const amount = Number(v || 0);
+      if (currency === "RWF") return `${amount.toLocaleString("en-US", { maximumFractionDigits: 0 })} RWF`;
+      return currencySymbol
+        ? `${currencySymbol} ${amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+        : amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    };
+    const fmtDate = (value, withTime = false) => {
+      if (!value) return "N/A";
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return "N/A";
+      return new Intl.DateTimeFormat("en-GB", {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+        ...(withTime ? { hour: "2-digit", minute: "2-digit", hour12: false } : {}),
+      }).format(date);
+    };
+    const formatAddress = (address) => {
+      if (!address) return "";
+      if (typeof address === "string") return address;
+      return [address.street, address.city, address.state, address.country, address.postcode].filter(Boolean).join(", ");
+    };
+    const companyTin = company?.tax_identification_number || company?.registration_number || "";
+    const customerTin = invoice.customerTin || invoice.client?.taxId || "";
+    const hasCustomerTin = Boolean(String(customerTin || "").trim());
 
     // Page counter
     let pageNumber = 1;
@@ -1941,8 +1963,9 @@ exports.generateInvoicePDF = async (req, res, next) => {
       doc.font("Helvetica").fontSize(9).fillColor("#6b7280");
       const contactX = 50;
       let contactY = 70;
-      if (company?.address) {
-        doc.text(company.address, contactX, contactY, { width: 260 });
+      const companyAddress = formatAddress(company?.address);
+      if (companyAddress) {
+        doc.text(companyAddress, contactX, contactY, { width: 260 });
         contactY += 12;
       }
       if (company?.phone) {
@@ -1953,9 +1976,12 @@ exports.generateInvoicePDF = async (req, res, next) => {
         doc.text(`Email: ${company.email}`, contactX, contactY);
         contactY += 12;
       }
-      const companyTin = company?.tax_identification_number || company?.registration_number;
       if (companyTin) {
-        doc.text(`TIN: ${companyTin}`, contactX, contactY);
+        doc.text(`TIN: ${String(companyTin).replace(/\D/g, "").slice(0, 9)}`, contactX, contactY);
+        contactY += 12;
+      }
+      if (company?.is_vat_registered && companyTin) {
+        doc.text(`VAT No: ${String(companyTin).replace(/\D/g, "").slice(0, 9)}`, contactX, contactY);
       }
 
       // Invoice title block
@@ -2008,11 +2034,7 @@ exports.generateInvoicePDF = async (req, res, next) => {
       doc.font("Helvetica").fontSize(9).fillColor("#6b7280");
       doc.text("Invoice Date:", 60, startY + 26);
       doc.fillColor("#111827").text(
-        new Date(invoice.invoiceDate).toLocaleDateString("en-GB", {
-          day: "2-digit",
-          month: "short",
-          year: "numeric",
-        }),
+        fmtDate(invoice.invoiceDate),
         140,
         startY + 26,
       );
@@ -2020,11 +2042,7 @@ exports.generateInvoicePDF = async (req, res, next) => {
       doc.fillColor("#6b7280").text("Due Date:", 60, startY + 42);
       doc.fillColor("#111827").text(
         invoice.dueDate
-          ? new Date(invoice.dueDate).toLocaleDateString("en-GB", {
-              day: "2-digit",
-              month: "short",
-              year: "numeric",
-            })
+          ? fmtDate(invoice.dueDate)
           : "On Delivery",
         140,
         startY + 42,
@@ -2044,28 +2062,43 @@ exports.generateInvoicePDF = async (req, res, next) => {
         startY + 28,
       );
       doc.fontSize(9).fillColor("#6b7280");
-      if (invoice.customerTin)
-        doc.text(`TIN: ${invoice.customerTin}`, 310, startY + 44);
-      if (invoice.customerAddress)
-        doc.text(invoice.customerAddress, 310, startY + 58, { width: 230 });
+      let billY = startY + 44;
+      if (hasCustomerTin) {
+        doc.text(`Customer TIN: ${customerTin}`, 310, billY);
+        billY += 14;
+      } else {
+        doc.text("Individual", 310, billY);
+        billY += 14;
+      }
+      const customerAddress = invoice.customerAddress || invoice.client?.contact?.address;
+      if (customerAddress)
+        doc.text(customerAddress, 310, billY, { width: 230 });
     };
 
     const drawRraDetails = (startY) => {
       const ebm = invoice.ebm || {};
       const status = ebm.ebmStatus || "not_submitted";
-      doc.rect(50, startY, doc.page.width - 100, 80).fillAndStroke("#ffffff", "#e5e7eb");
-      doc.fillColor("#374151").fontSize(10).font("Helvetica-Bold");
-      doc.text("RRA EBM DETAILS", 60, startY + 8);
-      doc.font("Helvetica").fontSize(8).fillColor("#6b7280");
-      doc.text(`Status: ${status.replace(/_/g, " ").toUpperCase()}`, 60, startY + 26);
-      doc.text(`Receipt No: ${ebm.rcptNo || (status === "pending" ? "Pending RRA" : "N/A")}`, 60, startY + 40);
-      doc.text(`Receipt Date: ${ebm.rcptDt || "N/A"}`, 60, startY + 54);
-      doc.text(`Signature: ${ebm.rcptSign || (status === "pending" ? "Pending" : "N/A")}`, 220, startY + 26, { width: 230 });
+      const receiptNo = status === "submitted"
+        ? (ebm.rcptNo || "N/A")
+        : status === "pending"
+          ? "Pending RRA Certification"
+          : status === "failed"
+            ? "RRA Certification Failed - Contact Administrator"
+            : "Not submitted to RRA";
+      doc.rect(50, startY, doc.page.width - 100, 112).fillAndStroke("#f8fafc", "#94a3b8");
+      doc.fillColor("#111827").fontSize(10).font("Helvetica-Bold");
+      doc.text("RRA EBM CERTIFICATION", 60, startY + 8);
+      doc.font("Helvetica").fontSize(8).fillColor("#475569");
+      doc.text(`RRA Receipt No: ${receiptNo}`, 60, startY + 28, { width: 300 });
+      doc.text(`Receipt Date: ${fmtDate(ebm.rcptDt, true)}`, 60, startY + 42, { width: 300 });
+      doc.text(`Internal Data: ${ebm.intrlData || "Pending"}`, 60, startY + 56, { width: 300 });
+      doc.text(`Receipt Signature: ${ebm.rcptSign || "Pending"}`, 60, startY + 70, { width: 360 });
+      doc.text("Scan to verify at: verify.rra.gov.rw", 60, startY + 96, { width: 300 });
       if (qrPng) {
-        doc.image(qrPng, doc.page.width - 135, startY + 12, { width: 62, height: 62 });
+        doc.image(qrPng, doc.page.width - 135, startY + 24, { width: 62, height: 62 });
       } else {
-        doc.rect(doc.page.width - 135, startY + 12, 62, 62).stroke("#d1d5db");
-        doc.fillColor("#9ca3af").fontSize(7).text("QR pending", doc.page.width - 130, startY + 38, { width: 52, align: "center" });
+        doc.rect(doc.page.width - 135, startY + 24, 62, 62).stroke("#d1d5db");
+        doc.fillColor("#64748b").fontSize(7).text("QR pending", doc.page.width - 130, startY + 50, { width: 52, align: "center" });
       }
     };
 
@@ -2083,11 +2116,18 @@ exports.generateInvoicePDF = async (req, res, next) => {
 
     // Start first page
     drawHeader();
-    drawInvoiceDetails(140);
-    drawRraDetails(230);
+    let firstContentY = 140;
+    if (invoice.ebm?.ebmStatus === "failed") {
+      doc.rect(50, 128, doc.page.width - 100, 34).fillAndStroke("#fef2f2", "#ef4444");
+      doc.fillColor("#991b1b").font("Helvetica-Bold").fontSize(9);
+      doc.text("RRA CERTIFICATION FAILED - this invoice is not yet RRA certified and may not be used as a valid tax document until resolved.", 60, 138, { width: doc.page.width - 120 });
+      firstContentY = 176;
+    }
+    drawInvoiceDetails(firstContentY);
+    drawRraDetails(firstContentY + 90);
 
     // Table
-    let y = 330;
+    let y = firstContentY + 220;
     tableHeader(y);
     y += 36;
     doc.font("Helvetica").fontSize(9).fillColor("#111827");
