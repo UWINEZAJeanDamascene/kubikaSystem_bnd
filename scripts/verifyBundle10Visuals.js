@@ -150,9 +150,12 @@ async function main() {
     customerName: client.name,
     customerTin: client.taxId,
     customerAddress: client.contact.address,
+    status: "confirmed",
     currencyCode: "RWF",
     invoiceDate: new Date("2026-05-23T10:00:00Z"),
     dueDate: new Date("2026-05-30T10:00:00Z"),
+    confirmedDate: new Date("2026-05-23T10:05:00Z"),
+    confirmedBy: userId,
     createdBy: userId,
     lines: [{
       product: product._id,

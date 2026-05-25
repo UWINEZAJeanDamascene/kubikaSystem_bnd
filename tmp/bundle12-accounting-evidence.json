@@ -1,0 +1,602 @@
+{
+  "task74": {
+    "command": "rg -n -i \"ebm\" services/journalService.js",
+    "matchCount": 0,
+    "output": "(no matches)",
+    "note": "JournalService has no direct EBM references. Direct model imports Product/Warehouse contain EBM schema fields, but JournalService does not read or write those fields."
+  },
+  "task75": {
+    "JE-2910-2026-00001:manual:CAP-001": {
+      "entryNumber": "JE-2910-2026-00001",
+      "sourceType": "manual",
+      "sourceReference": "CAP-001",
+      "totalDebit": 1000000,
+      "totalCredit": 1000000,
+      "lines": [
+        {
+          "accountCode": "1100",
+          "accountName": "Cash at Bank",
+          "debit": 1000000,
+          "credit": 0,
+          "description": "Cash received from owner",
+          "reconciled": false
+        },
+        {
+          "accountCode": "3000",
+          "accountName": "Share Capital",
+          "debit": 0,
+          "credit": 1000000,
+          "description": "Share capital issued",
+          "reconciled": false
+        }
+      ]
+    },
+    "JE-2910-2026-00002:purchase:PUR-VAT-001": {
+      "entryNumber": "JE-2910-2026-00002",
+      "sourceType": "purchase",
+      "sourceReference": "PUR-VAT-001",
+      "totalDebit": 590000,
+      "totalCredit": 590000,
+      "lines": [
+        {
+          "accountCode": "1400",
+          "accountName": "Inventory",
+          "debit": 500000,
+          "credit": 0,
+          "description": "Purchase PUR-VAT-001 - Inventory",
+          "reconciled": false
+        },
+        {
+          "accountCode": "2210",
+          "accountName": "VAT Input",
+          "debit": 90000,
+          "credit": 0,
+          "description": "Purchase PUR-VAT-001 - VAT",
+          "reconciled": false
+        },
+        {
+          "accountCode": "2000",
+          "accountName": "Accounts Payable",
+          "debit": 0,
+          "credit": 590000,
+          "description": "Purchase PUR-VAT-001",
+          "reconciled": false
+        }
+      ]
+    },
+    "JE-2910-2026-00003:payment:PUR-VAT-001": {
+      "entryNumber": "JE-2910-2026-00003",
+      "sourceType": "payment",
+      "sourceReference": "PUR-VAT-001",
+      "totalDebit": 590000,
+      "totalCredit": 590000,
+      "lines": [
+        {
+          "accountCode": "2000",
+          "accountName": "Accounts Payable",
+          "debit": 590000,
+          "credit": 0,
+          "description": "Payment made for purchase PUR-VAT-001",
+          "reconciled": false
+        },
+        {
+          "accountCode": "1100",
+          "accountName": "Cash at Bank",
+          "debit": 0,
+          "credit": 590000,
+          "description": "Payment made for purchase PUR-VAT-001",
+          "reconciled": false
+        }
+      ]
+    },
+    "JE-2910-2026-00004:invoice:INV-B-001": {
+      "entryNumber": "JE-2910-2026-00004",
+      "sourceType": "invoice",
+      "sourceReference": "INV-B-001",
+      "totalDebit": 1180000,
+      "totalCredit": 1180000,
+      "lines": [
+        {
+          "accountCode": "1300",
+          "accountName": "Accounts Receivable",
+          "debit": 1180000,
+          "credit": 0,
+          "description": "Invoice INV-B-001 - Receivable",
+          "reconciled": false
+        },
+        {
+          "accountCode": "4000",
+          "accountName": "Sales Revenue",
+          "debit": 0,
+          "credit": 1000000,
+          "description": "Invoice INV-B-001 - Revenue",
+          "reconciled": false
+        },
+        {
+          "accountCode": "2220",
+          "accountName": "VAT Output",
+          "debit": 0,
+          "credit": 180000,
+          "description": "Invoice INV-B-001 - VAT",
+          "reconciled": false
+        }
+      ]
+    },
+    "JE-2910-2026-00005:invoice:INV-MIX-001": {
+      "entryNumber": "JE-2910-2026-00005",
+      "sourceType": "invoice",
+      "sourceReference": "INV-MIX-001",
+      "totalDebit": 649000,
+      "totalCredit": 649000,
+      "lines": [
+        {
+          "accountCode": "1300",
+          "accountName": "Accounts Receivable",
+          "debit": 649000,
+          "credit": 0,
+          "description": "Invoice INV-MIX-001 - Receivable",
+          "reconciled": false
+        },
+        {
+          "accountCode": "4000",
+          "accountName": "Sales Revenue",
+          "debit": 0,
+          "credit": 550000,
+          "description": "Invoice INV-MIX-001 - Revenue",
+          "reconciled": false
+        },
+        {
+          "accountCode": "2220",
+          "accountName": "VAT Output",
+          "debit": 0,
+          "credit": 99000,
+          "description": "Invoice INV-MIX-001 - VAT",
+          "reconciled": false
+        }
+      ]
+    },
+    "JE-2910-2026-00006:invoice:POS-B-001": {
+      "entryNumber": "JE-2910-2026-00006",
+      "sourceType": "invoice",
+      "sourceReference": "POS-B-001",
+      "totalDebit": 236000,
+      "totalCredit": 236000,
+      "lines": [
+        {
+          "accountCode": "1300",
+          "accountName": "Accounts Receivable",
+          "debit": 236000,
+          "credit": 0,
+          "description": "Invoice POS-B-001 - Receivable",
+          "reconciled": false
+        },
+        {
+          "accountCode": "4000",
+          "accountName": "Sales Revenue",
+          "debit": 0,
+          "credit": 200000,
+          "description": "Invoice POS-B-001 - Revenue",
+          "reconciled": false
+        },
+        {
+          "accountCode": "2220",
+          "accountName": "VAT Output",
+          "debit": 0,
+          "credit": 36000,
+          "description": "Invoice POS-B-001 - VAT",
+          "reconciled": false
+        }
+      ]
+    },
+    "JE-2910-2026-00007:payment:INV-B-001": {
+      "entryNumber": "JE-2910-2026-00007",
+      "sourceType": "payment",
+      "sourceReference": "INV-B-001",
+      "totalDebit": 1180000,
+      "totalCredit": 1180000,
+      "lines": [
+        {
+          "accountCode": "1100",
+          "accountName": "Cash at Bank",
+          "debit": 1180000,
+          "credit": 0,
+          "description": "Payment for INV-B-001",
+          "reconciled": false
+        },
+        {
+          "accountCode": "1300",
+          "accountName": "Accounts Receivable",
+          "debit": 0,
+          "credit": 1180000,
+          "description": "Payment for INV-B-001",
+          "reconciled": false
+        }
+      ]
+    },
+    "JE-2910-2026-00008:credit_note:CN-001": {
+      "entryNumber": "JE-2910-2026-00008",
+      "sourceType": "credit_note",
+      "sourceReference": "CN-001",
+      "totalDebit": 118000,
+      "totalCredit": 118000,
+      "lines": [
+        {
+          "accountCode": "4100",
+          "accountName": "Sales Returns",
+          "debit": 100000,
+          "credit": 0,
+          "description": "Credit Note CN-001 - Returns",
+          "reconciled": false
+        },
+        {
+          "accountCode": "2220",
+          "accountName": "VAT Output",
+          "debit": 18000,
+          "credit": 0,
+          "description": "Credit Note CN-001 - VAT",
+          "reconciled": false
+        },
+        {
+          "accountCode": "1300",
+          "accountName": "Accounts Receivable",
+          "debit": 0,
+          "credit": 118000,
+          "description": "Credit Note CN-001",
+          "reconciled": false
+        }
+      ]
+    },
+    "JE-2910-2026-00009:payroll:Payroll: May 2026 - Bundle 12 Employee": {
+      "entryNumber": "JE-2910-2026-00009",
+      "sourceType": "payroll",
+      "sourceReference": null,
+      "totalDebit": 525000,
+      "totalCredit": 525000,
+      "lines": [
+        {
+          "accountCode": "5410",
+          "accountName": "Payroll Expenses",
+          "debit": 500000,
+          "credit": 0,
+          "description": "Payroll: May 2026",
+          "reconciled": false
+        },
+        {
+          "accountCode": "1100",
+          "accountName": "Cash at Bank",
+          "debit": 0,
+          "credit": 360000,
+          "description": "Net salary payment: May 2026",
+          "reconciled": false
+        },
+        {
+          "accountCode": "2230",
+          "accountName": "PAYE Tax Payable",
+          "debit": 0,
+          "credit": 90000,
+          "description": "Tax withheld: May 2026",
+          "reconciled": false
+        },
+        {
+          "accountCode": "2240",
+          "accountName": "RSSB Payable",
+          "debit": 0,
+          "credit": 50000,
+          "description": "RSSB contribution: May 2026",
+          "reconciled": false
+        },
+        {
+          "accountCode": "6150",
+          "accountName": "RSSB Employer Cost",
+          "debit": 25000,
+          "credit": 0,
+          "description": "Employer contribution: May 2026",
+          "reconciled": false
+        },
+        {
+          "accountCode": "2310",
+          "accountName": "PAYE Payable — RRA",
+          "debit": 0,
+          "credit": 25000,
+          "description": "Employer contribution payable: May 2026",
+          "reconciled": false
+        }
+      ]
+    },
+    "JE-2910-2026-00010:stock_adjustment:Stock adjustment: Bundle 12 Item - increase": {
+      "entryNumber": "JE-2910-2026-00010",
+      "sourceType": "stock_adjustment",
+      "sourceReference": null,
+      "totalDebit": 75000,
+      "totalCredit": 75000,
+      "lines": [
+        {
+          "accountCode": "1400",
+          "accountName": "Inventory",
+          "debit": 75000,
+          "credit": 0,
+          "description": "Stock adjustment increase: Bundle 12 Item",
+          "reconciled": false
+        },
+        {
+          "accountCode": "7100",
+          "accountName": "Stock Adjustment",
+          "debit": 0,
+          "credit": 75000,
+          "description": "Stock adjustment increase: Bundle 12 Item",
+          "reconciled": false
+        }
+      ]
+    },
+    "JE-2910-2026-00011:bank_transfer:Bank transfer": {
+      "entryNumber": "JE-2910-2026-00011",
+      "sourceType": "bank_transfer",
+      "sourceReference": null,
+      "totalDebit": 250000,
+      "totalCredit": 250000,
+      "lines": [
+        {
+          "accountCode": "1100",
+          "accountName": "Cash at Bank",
+          "debit": 250000,
+          "credit": 0,
+          "description": "Transfer to Bank Account",
+          "reconciled": false
+        },
+        {
+          "accountCode": "1000",
+          "accountName": "Cash in Hand",
+          "debit": 0,
+          "credit": 250000,
+          "description": "Transfer from Bank Account",
+          "reconciled": false
+        }
+      ]
+    },
+    "JE-2910-2026-00012:asset:Asset purchased: Bundle 12 Computer": {
+      "entryNumber": "JE-2910-2026-00012",
+      "sourceType": "asset",
+      "sourceReference": null,
+      "totalDebit": 300000,
+      "totalCredit": 300000,
+      "lines": [
+        {
+          "accountCode": "1700",
+          "accountName": "Equipment",
+          "debit": 246000,
+          "credit": 0,
+          "description": "Asset: Bundle 12 Computer",
+          "reconciled": false
+        },
+        {
+          "accountCode": "2210",
+          "accountName": "VAT Input",
+          "debit": 54000,
+          "credit": 0,
+          "description": "Asset: Bundle 12 Computer - VAT Input",
+          "reconciled": false
+        },
+        {
+          "accountCode": "1100",
+          "accountName": "Cash at Bank",
+          "debit": 0,
+          "credit": 300000,
+          "description": "Asset purchase: Bundle 12 Computer",
+          "reconciled": false
+        }
+      ]
+    },
+    "JE-2910-2026-00013:depreciation:Depreciation expense - May 2026": {
+      "entryNumber": "JE-2910-2026-00013",
+      "sourceType": "depreciation",
+      "sourceReference": null,
+      "totalDebit": 12500,
+      "totalCredit": 12500,
+      "lines": [
+        {
+          "accountCode": "5800",
+          "accountName": "Depreciation Expense",
+          "debit": 12500,
+          "credit": 0,
+          "description": "Depreciation for May 2026",
+          "reconciled": false
+        },
+        {
+          "accountCode": "1820",
+          "accountName": "Accumulated Depreciation - Computers",
+          "debit": 0,
+          "credit": 12500,
+          "description": "Depreciation for May 2026",
+          "reconciled": false
+        }
+      ]
+    },
+    "JE-2910-2026-00014:purchase:GRN-B-001": {
+      "entryNumber": "JE-2910-2026-00014",
+      "sourceType": "purchase",
+      "sourceReference": "GRN-B-001",
+      "totalDebit": 118000,
+      "totalCredit": 118000,
+      "lines": [
+        {
+          "accountCode": "1400",
+          "accountName": "Inventory",
+          "debit": 100000,
+          "credit": 0,
+          "description": "Purchase GRN-B-001 - Inventory",
+          "reconciled": false
+        },
+        {
+          "accountCode": "2210",
+          "accountName": "VAT Input",
+          "debit": 18000,
+          "credit": 0,
+          "description": "Purchase GRN-B-001 - VAT",
+          "reconciled": false
+        },
+        {
+          "accountCode": "2000",
+          "accountName": "Accounts Payable",
+          "debit": 0,
+          "credit": 118000,
+          "description": "Purchase GRN-B-001",
+          "reconciled": false
+        }
+      ]
+    },
+    "JE-2910-2026-00015:purchase:GRN-MIX-001": {
+      "entryNumber": "JE-2910-2026-00015",
+      "sourceType": "purchase",
+      "sourceReference": "GRN-MIX-001",
+      "totalDebit": 177000,
+      "totalCredit": 177000,
+      "lines": [
+        {
+          "accountCode": "1400",
+          "accountName": "Inventory",
+          "debit": 150000,
+          "credit": 0,
+          "description": "Purchase GRN-MIX-001 - Inventory",
+          "reconciled": false
+        },
+        {
+          "accountCode": "2210",
+          "accountName": "VAT Input",
+          "debit": 27000,
+          "credit": 0,
+          "description": "Purchase GRN-MIX-001 - VAT",
+          "reconciled": false
+        },
+        {
+          "accountCode": "2000",
+          "accountName": "Accounts Payable",
+          "debit": 0,
+          "credit": 177000,
+          "description": "Purchase GRN-MIX-001",
+          "reconciled": false
+        }
+      ]
+    }
+  },
+  "task76": [
+    {
+      "invoice": "INV-B-001",
+      "journalVatOutput": 180000,
+      "ebmPayloadTaxAmtB": 180000,
+      "invoiceVatTotal": 180000,
+      "pass": true
+    },
+    {
+      "invoice": "INV-MIX-001",
+      "journalVatOutput": 99000,
+      "ebmPayloadTaxAmtB": 99000,
+      "invoiceVatTotal": 99000,
+      "pass": true
+    },
+    {
+      "invoice": "POS-B-001",
+      "journalVatOutput": 36000,
+      "ebmPayloadTaxAmtB": 36000,
+      "invoiceVatTotal": 36000,
+      "pass": true
+    }
+  ],
+  "task77": [
+    {
+      "grn": "GRN-B-001",
+      "journalVatInput": 18000,
+      "ebmPurchasePayloadVatAmount": 18000,
+      "grnVatTotal": 18000,
+      "pass": true
+    },
+    {
+      "grn": "GRN-MIX-001",
+      "journalVatInput": 27000,
+      "ebmPurchasePayloadVatAmount": 27000,
+      "grnVatTotal": 27000,
+      "pass": true
+    }
+  ],
+  "task78": {
+    "revenue": 1650000,
+    "expenses": 462500,
+    "netProfit": 1187500,
+    "salesRevenueAccount": "4000",
+    "noEbmAccounts": true
+  },
+  "task79": {
+    "assets": 2944500,
+    "liabilities": 757000,
+    "equity": 1000000,
+    "currentProfit": 1187500,
+    "liabilitiesPlusEquity": 2944500,
+    "balances": true,
+    "noEbmAccounts": true
+  },
+  "task80": {
+    "totalDebits": 7000500,
+    "totalCredits": 7000500,
+    "balances": true,
+    "checkedAccounts": [
+      {
+        "accountCode": "1100",
+        "accountName": "Cash at Bank",
+        "debitBalance": 1180000,
+        "creditBalance": 0
+      },
+      {
+        "accountCode": "1300",
+        "accountName": "Accounts Receivable",
+        "debitBalance": 767000,
+        "creditBalance": 0
+      },
+      {
+        "accountCode": "2000",
+        "accountName": "Accounts Payable",
+        "debitBalance": 0,
+        "creditBalance": 295000
+      },
+      {
+        "accountCode": "2210",
+        "accountName": "VAT Input",
+        "debitBalance": 189000,
+        "creditBalance": 0
+      },
+      {
+        "accountCode": "2220",
+        "accountName": "VAT Output",
+        "debitBalance": 0,
+        "creditBalance": 297000
+      },
+      {
+        "accountCode": "4000",
+        "accountName": "Sales Revenue",
+        "debitBalance": 0,
+        "creditBalance": 1750000
+      }
+    ],
+    "noEbmAccounts": true
+  },
+  "task81": {
+    "netCashMovement": 930000,
+    "balanceSheetCashMovement": 930000,
+    "matchesBalanceSheetCashMovement": true
+  },
+  "task82": {
+    "reference": null,
+    "reconciliationStatus": "reconciled",
+    "matchedLineCount": 2,
+    "bookBalanceMatchesCashLedger": true,
+    "ebmEntriesInUnreconciledList": 0
+  },
+  "checklist": {
+    "journalServiceHasZeroEbmReferences": true,
+    "allJournalEntriesBalance": true,
+    "vatOutputComparisonsPass": true,
+    "vatInputComparisonsPass": true,
+    "noEbmDataInFinancialReports": true,
+    "balanceSheetEquationHolds": true,
+    "trialBalanceDebitsEqualCredits": true,
+    "cashFlowMatchesCashLedger": true
+  }
+}

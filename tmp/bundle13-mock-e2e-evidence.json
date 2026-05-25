@@ -1,0 +1,332 @@
+{
+  "evidenceMode": "in-memory mock database using service/controller-equivalent paths; not final UI-created record sign-off",
+  "task85": {
+    "collections": [
+      {
+        "collection": "EBMDevice",
+        "scopedField": "company",
+        "required": true,
+        "result": true
+      },
+      {
+        "collection": "EBMCode",
+        "scopedField": "company",
+        "required": true,
+        "result": true
+      },
+      {
+        "collection": "EBMItemClass",
+        "scopedField": "company",
+        "required": true,
+        "result": true
+      },
+      {
+        "collection": "EBMTIN",
+        "scopedField": null,
+        "required": false,
+        "result": true,
+        "note": "Global registry; intentionally not tenant scoped."
+      },
+      {
+        "collection": "EBMNotice",
+        "scopedField": "company",
+        "required": true,
+        "result": true
+      },
+      {
+        "collection": "EBMSyncState",
+        "scopedField": "company",
+        "required": true,
+        "result": true
+      },
+      {
+        "collection": "EBMImportedItem",
+        "scopedField": "company",
+        "required": true,
+        "result": true
+      },
+      {
+        "collection": "EBMSubmissionQueue",
+        "scopedField": "companyId",
+        "required": true,
+        "result": true
+      },
+      {
+        "collection": "EBMAlert",
+        "scopedField": "companyId",
+        "required": true,
+        "result": true
+      },
+      {
+        "collection": "EBMUnmatchedPurchase",
+        "scopedField": "company",
+        "required": true,
+        "result": true
+      }
+    ],
+    "unscopedQueryScan": [
+      {
+        "file": "ebmBranchService.js",
+        "line": 70,
+        "text": "const company = await Company.findById(companyId).lean();"
+      },
+      {
+        "file": "ebmBranchService.js",
+        "line": 102,
+        "text": "const company = await Company.findById(companyId).lean();"
+      },
+      {
+        "file": "ebmBranchService.js",
+        "line": 126,
+        "text": "const company = await Company.findById(companyId).lean();"
+      },
+      {
+        "file": "ebmDeviceService.js",
+        "line": 53,
+        "text": "const company = await Company.findById(companyId).lean();"
+      },
+      {
+        "file": "ebmImportedItemService.js",
+        "line": 261,
+        "text": "return EBMImportedItem.findById(imported._id).populate('grn', 'referenceNo status');"
+      },
+      {
+        "file": "ebmImportedItemService.js",
+        "line": 397,
+        "text": "return EBMImportedItem.findById(imported._id).populate('grn', 'referenceNo status');"
+      },
+      {
+        "file": "ebmPurchaseService.js",
+        "line": 229,
+        "text": "const company = await Company.findById(doc.company).lean();"
+      },
+      {
+        "file": "ebmSalesService.js",
+        "line": 577,
+        "text": "const company = await Company.findById(companyId).lean();"
+      },
+      {
+        "file": "ebmSalesService.js",
+        "line": 631,
+        "text": "const company = await Company.findById(companyId).lean();"
+      },
+      {
+        "file": "ebmStockService.js",
+        "line": 233,
+        "text": "const company = await Company.findById(companyId).lean();"
+      },
+      {
+        "file": "ebmStockService.js",
+        "line": 438,
+        "text": "const company = await Company.findById(companyId).lean();"
+      }
+    ]
+  },
+  "task86": {
+    "tinRoutingSamples": [
+      {
+        "service": "ebmSalesService",
+        "tenant": "A",
+        "tin": "999991130",
+        "bhfId": "00"
+      },
+      {
+        "service": "ebmSalesService",
+        "tenant": "B",
+        "tin": "999991131",
+        "bhfId": "00"
+      },
+      {
+        "service": "stock payload",
+        "tenant": "A",
+        "tin": "999991130",
+        "bhfId": "00"
+      }
+    ],
+    "tinGrepLines": [
+      {
+        "file": "ebmBranchService.js",
+        "line": 13,
+        "text": "tin: company.tax_identification_number || company.registration_number,"
+      },
+      {
+        "file": "ebmBranchService.js",
+        "line": 16,
+        "text": "tin: company.tax_identification_number || company.registration_number,"
+      },
+      {
+        "file": "ebmBranchService.js",
+        "line": 105,
+        "text": "tin: company?.tax_identification_number || company?.registration_number,"
+      },
+      {
+        "file": "ebmBranchService.js",
+        "line": 129,
+        "text": "tin: company?.tax_identification_number || company?.registration_number,"
+      },
+      {
+        "file": "ebmCodeSyncService.js",
+        "line": 98,
+        "text": "tin: device.tin,"
+      },
+      {
+        "file": "ebmDeviceService.js",
+        "line": 33,
+        "text": "tin: raw.tin,"
+      },
+      {
+        "file": "ebmImportedItemService.js",
+        "line": 129,
+        "text": "tin: device.tin,"
+      },
+      {
+        "file": "ebmImportedItemService.js",
+        "line": 231,
+        "text": "tin: device.tin,"
+      },
+      {
+        "file": "ebmProductService.js",
+        "line": 86,
+        "text": "tin: options.tin,"
+      },
+      {
+        "file": "ebmPurchaseService.js",
+        "line": 193,
+        "text": "tin: getTin(company),"
+      },
+      {
+        "file": "ebmPurchaseService.js",
+        "line": 277,
+        "text": "tin: device.tin,"
+      },
+      {
+        "file": "ebmService.js",
+        "line": 461,
+        "text": "tin: '100000003',"
+      },
+      {
+        "file": "ebmService.js",
+        "line": 468,
+        "text": "tin: '100000004',"
+      },
+      {
+        "file": "ebmStockService.js",
+        "line": 136,
+        "text": "tin: getTin(company),"
+      },
+      {
+        "file": "ebmStockService.js",
+        "line": 153,
+        "text": "tin: getTin(company),"
+      }
+    ],
+    "hardcodedTinValuesFound": [
+      {
+        "file": "ebmService.js",
+        "line": 461,
+        "text": "tin: '100000003',"
+      },
+      {
+        "file": "ebmService.js",
+        "line": 468,
+        "text": "tin: '100000004',"
+      }
+    ]
+  },
+  "task87": {
+    "deviceIsolationTenantBSeesTenantADevices": 0,
+    "codeIsolationTenantBBeforeSyncCount": 0,
+    "invoiceIsolationTenantBSeesTenantAInvoice": 0,
+    "queueIsolationTenantBSeesTenantAQueue": 0,
+    "alertIsolationTenantBSeesTenantAAlert": 0,
+    "tinRoutingIsolation": {
+      "tenantAInvoiceTin": "999991130",
+      "tenantBInvoiceTin": "999991131",
+      "pass": true
+    }
+  },
+  "task88": {
+    "lineCount": 2,
+    "taxAmtB": 63720,
+    "totalAmount": 417720,
+    "rraFieldsPresent": true,
+    "vatOutputJournal": 63720,
+    "vatMatches": true
+  },
+  "task89": {
+    "taxblAmtA": 50000,
+    "taxAmtA": 0,
+    "taxblAmtB": 118000,
+    "taxAmtB": 21240,
+    "vatOutputJournal": 21240,
+    "vatMatches": true
+  },
+  "task90": {
+    "initialStatusSimulated": "pending",
+    "finalStatus": "submitted",
+    "rraFieldsPresent": true,
+    "vatOutputJournal": 21240,
+    "vatMatches": true
+  },
+  "task91": {
+    "creditNote": "A-CN-001",
+    "orgInvcNo": "A-B2B-001",
+    "orgRcptNo": "1032602977",
+    "originalRcptNo": "1032602977",
+    "newRcptNo": 2582079116,
+    "independentSignature": true,
+    "pendingOriginalBlockedCode": "EBM_ORIGINAL_INVOICE_NOT_SUBMITTED"
+  },
+  "task92": {
+    "stockTypeCode": "02",
+    "saveStockItemsResult": "000",
+    "saveStockMasterResult": "000",
+    "tin": "999991130",
+    "bhfId": "00"
+  },
+  "task93": {
+    "initialFailure": {
+      "ebmStatus": "pending",
+      "retryCount": 1,
+      "isRetryable": true,
+      "nextRetryAtSet": true
+    },
+    "abandoned": {
+      "ebmStatus": "abandoned",
+      "retryCount": 3,
+      "alertCreated": true
+    },
+    "reset": {
+      "ebmStatus": "pending",
+      "resolvedAt": null
+    },
+    "recovered": {
+      "ebmStatus": "submitted",
+      "resolvedAtSet": true
+    }
+  },
+  "task94": {
+    "directPurchaseFlowUsesSharedService": "EBMPurchaseService is the shared purchase sync/confirmation implementation for PO and direct purchases.",
+    "duplicatePurchaseServiceImplementationsFound": false
+  },
+  "task95": {
+    "tenantAInvoiceTin": "999991130",
+    "tenantBInvoiceTin": "999991131",
+    "tenantARcptNo": "1032602977",
+    "tenantBRcptNo": "569171905",
+    "receiptNumbersDifferent": true,
+    "tenantBInvoiceLeakCount": 0,
+    "tenantBQueueLeakCount": 0,
+    "tenantAStockTin": "999991130",
+    "tenantBStockTin": "999991131"
+  },
+  "finalChecklist": {
+    "noCrossTenantLeakageInTestedQueries": true,
+    "tinRoutingPerTenant": true,
+    "vatConsistentInSalesScenarios": true,
+    "retryRecoveryWorks": true,
+    "rraCertificationDataPresent": true,
+    "readyForSandbox": false,
+    "reasonNotReady": "Evidence harness is service-level mock mode; final sign-off still requires real UI/API-created records as requested."
+  }
+}
