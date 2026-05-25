@@ -8,7 +8,6 @@ const QRCode = require('qrcode');
 const { notifyLowStock, notifyOutOfStock, notifyStockReceived } = require('../services/notificationHelper');
 const cacheService = require('../services/cacheService');
 const { parsePagination, paginationMeta } = require('../utils/pagination');
-const EBMProductService = require('../services/ebmProductService');
 
 // @desc    Get all products
 // @route   GET /api/products
@@ -67,8 +66,6 @@ exports.getProducts = async (req, res, next) => {
         query.currentStock = { $gt: 0 };
       } else if (status === 'in_stock') {
         query.$expr = { $gt: ['$currentStock', '$lowStockThreshold'] };
-      } else if (status === 'ebm_unregistered') {
-        query['ebm.isRegisteredWithEBM'] = { $ne: true };
       }
     }
 
@@ -197,7 +194,6 @@ exports.createProduct = async (req, res, next) => {
     if (req.body.inventory_account_id) req.body.inventoryAccount = req.body.inventory_account_id;
     if (req.body.cogs_account_id) req.body.cogsAccount = req.body.cogs_account_id;
     if (req.body.revenue_account_id) req.body.revenueAccount = req.body.revenue_account_id;
-    if (req.body.ebm) EBMProductService.normalizeProductEbm(req.body);
 
     // If averageCost is not provided or is 0, use costPrice as default
     if ((!req.body.averageCost || Number(req.body.averageCost) === 0) && req.body.costPrice && Number(req.body.costPrice) > 0) {
@@ -205,7 +201,6 @@ exports.createProduct = async (req, res, next) => {
     }
 
     const product = await Product.create(req.body);
-    EBMProductService.registerProductInBackground(companyId, product._id);
 
     // Link product to supplier if supplier is provided
     if (product.supplier) {
@@ -273,12 +268,6 @@ exports.updateProduct = async (req, res, next) => {
     }
 
     // Update product
-    if (req.body.ebm) {
-      EBMProductService.normalizeProductEbm(req.body);
-      req.body.ebm.isRegisteredWithEBM = false;
-      req.body.ebm.registeredWithRra = false;
-      req.body.ebm.ebmRegistrationError = null;
-    }
     Object.assign(product, req.body);
 
     // If averageCost is 0 but costPrice is set, use costPrice as averageCost
@@ -297,7 +286,6 @@ exports.updateProduct = async (req, res, next) => {
     });
 
     await product.save();
-    EBMProductService.registerProductInBackground(companyId, product._id);
 
     // Check for low stock / out of stock and send notifications
     if (product.currentStock !== undefined) {
@@ -695,17 +683,6 @@ exports.checkLowStockAndNotify = async (req, res, next) => {
         lowStockCount
       }
     });
-  } catch (error) {
-    next(error);
-  }
-};
-
-exports.registerProductWithEBM = async (req, res, next) => {
-  try {
-    const company = req.user && req.user.company;
-    const companyId = (company && company._id) ? company._id : company;
-    const product = await EBMProductService.registerProduct(companyId, req.params.id);
-    res.json({ success: true, data: product, message: 'Product registered with RRA EBM' });
   } catch (error) {
     next(error);
   }

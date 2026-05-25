@@ -12,6 +12,7 @@ const EBMProductService = require('../services/ebmProductService');
 const EBMSalesService = require('../services/ebmSalesService');
 const {
   extractPayloadTotals,
+  formatReceiptDate,
   formatRwf,
   generateQrPng,
   lineTaxDetails,
@@ -524,7 +525,7 @@ exports.getReceipt = async (req, res, next) => {
       changeGivenRwf: formatRwf(Math.max(0, Number(data.amountPaid || 0) - Number(data.grandTotal || data.totalAmount || 0))),
     };
     data.ebm.rcptNoDisplay = data.ebm.rcptNo || (ebmStatus === 'pending' ? 'Pending RRA' : placeholder);
-    data.ebm.rcptDtDisplay = data.ebm.rcptDt || placeholder;
+    data.ebm.rcptDtDisplay = data.ebm.rcptDt ? formatReceiptDate(data.ebm.rcptDt) : placeholder;
     data.ebm.intrlDataDisplay = data.ebm.intrlData || placeholder;
     data.ebm.rcptSignDisplay = data.ebm.rcptSign || placeholder;
     data.ebm.qrCodeDataUrl = qrPng ? `data:image/png;base64,${qrPng.toString('base64')}` : null;

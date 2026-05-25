@@ -16,6 +16,7 @@ const EBMCode = require("../models/EBMCode");
 const {
   drawEbmCertificationBlock,
   drawTaxBreakdown,
+  formatReceiptDate,
   formatRwf,
   generateQrPng,
   lineTaxDetails,
@@ -313,7 +314,7 @@ exports.generateCreditNotePDF = async (req, res, next) => {
       ebm: note.ebm || {},
       qrPng,
       title: "RRA EBM CERTIFICATION - CREDIT NOTE",
-      receiptDateFormatter: (value) => fmtDate(value, true),
+      receiptDateFormatter: formatReceiptDate,
       originalReceiptNo: note.ebm?.orgRcptNo || originalInvoice.ebm?.rcptNo || null,
     });
 

@@ -21,6 +21,26 @@ function formatRwf(value) {
   return `RWF ${Math.round(toNumber(value)).toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
 }
 
+function formatReceiptDate(value) {
+  if (!value) return "N/A";
+  const raw = String(value).trim();
+  const vsdc = raw.match(/^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})$/);
+  if (vsdc) {
+    const [, year, month, day, hour, minute] = vsdc;
+    return `${day}/${month}/${year} ${hour}:${minute}`;
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "N/A";
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(date);
+}
+
 function taxTypeLabel(code) {
   const normalized = String(code || "A").toUpperCase();
   return `${normalized} (${TAX_TYPES[normalized] || "Unknown"})`;
@@ -166,6 +186,7 @@ module.exports = {
   drawEbmCertificationBlock,
   drawTaxBreakdown,
   extractPayloadTotals,
+  formatReceiptDate,
   formatRwf,
   generateQrPng,
   lineTaxDetails,

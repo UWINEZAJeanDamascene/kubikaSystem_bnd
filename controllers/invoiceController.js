@@ -21,6 +21,7 @@ const EBMSalesService = require("../services/ebmSalesService");
 const {
   drawEbmCertificationBlock,
   drawTaxBreakdown,
+  formatReceiptDate,
   formatRwf,
   generateQrPng,
   lineTaxDetails,
@@ -2089,7 +2090,7 @@ exports.generateInvoicePDF = async (req, res, next) => {
         y: startY,
         ebm: invoice.ebm || {},
         qrPng,
-        receiptDateFormatter: (value) => fmtDate(value, true),
+        receiptDateFormatter: formatReceiptDate,
       });
     };
 

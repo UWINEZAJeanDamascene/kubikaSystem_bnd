@@ -1015,6 +1015,10 @@ class JournalService {
    */
   static async createDepreciationEntry(companyId, userId, depreciation) {
     const lines = [];
+    const accumulatedDepreciationAccount =
+      depreciation.accumulatedDepreciationAccount ||
+      depreciation.accumulatedDepreciationAccountCode ||
+      DEFAULT_ACCOUNTS.accumulatedDepreciationOther;
 
     // Debit: Depreciation Expense
     lines.push(this.createDebitLine(
@@ -1025,7 +1029,7 @@ class JournalService {
 
     // Credit: Accumulated Depreciation
     lines.push(this.createCreditLine(
-      DEFAULT_ACCOUNTS.accumulatedDepreciation,
+      accumulatedDepreciationAccount,
       depreciation.amount,
       `Depreciation for ${depreciation.period}`
     ));
