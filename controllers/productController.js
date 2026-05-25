@@ -817,3 +817,27 @@ exports.getProductQRCode = async (req, res, next) => {
     next(error);
   }
 };
+
+// @desc    Register product with RRA EBM
+// @route   POST /api/products/:id/ebm/register
+// @access  Private (admin)
+exports.registerProductWithEBM = async (req, res, next) => {
+  try {
+    const company = req.user && req.user.company;
+    const companyId = (company && company._id) ? company._id : company;
+    const productId = req.params.id;
+
+    const EBMProductService = require('../services/ebmProductService');
+
+    // Allow optional tin override or other options via body
+    const options = {};
+    if (req.body && req.body.tin) options.tin = req.body.tin;
+
+    const product = await EBMProductService.registerProduct(companyId, productId, options);
+
+    res.json({ success: true, data: product, message: 'Product registered with RRA EBM' });
+  } catch (error) {
+    // Let upstream error handler format the response
+    next(error);
+  }
+};
