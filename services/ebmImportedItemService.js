@@ -175,7 +175,7 @@ class EBMImportedItemService {
   }
 
   static async syncDueCompanies() {
-    const intervalHours = Math.max(1, Number(process.env.EBM_IMPORT_SYNC_INTERVAL_HOURS || 24));
+    const intervalHours = Math.max(1, Number(process.env.EBM_IMPORT_SYNC_INTERVAL_HOURS || 12));
     const dueBefore = new Date(Date.now() - intervalHours * 60 * 60 * 1000);
     const devices = await EBMDevice.find({
       status: EBM_DEVICE_STATUSES.INITIALIZED,

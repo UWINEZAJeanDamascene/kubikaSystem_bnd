@@ -1,0 +1,12 @@
+{
+    "alertId":  "6a14a6c2d0d8950c46107768",
+    "creditNoteId":  "6a14a6c2d7adffcf9b7fbeb0",
+    "retry2RetryCount":  3,
+    "queueId":  "6a14a69dd0d8950c46107767",
+    "resetRetryCount":  0,
+    "retry1Status":  "pending",
+    "resetQueueStatus":  "pending",
+    "retry2Status":  "abandoned",
+    "retry1RetryCount":  2,
+    "invoiceId":  "6a14a69dd7adffcf9b7fbe27"
+}

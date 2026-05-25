@@ -298,6 +298,17 @@ class EBMService {
     const tin = payload.tin || '999000099';
     const bhfId = payload.bhfId || '00';
 
+    if (endpoint === VSDC_ENDPOINTS.SAVE_SALES && process.env.EBM_MOCK_FORCE_SAVE_SALES_503 === 'true') {
+      throw new EBMServiceError('Mock VSDC saveSales forced HTTP 503 failure', {
+        code: 'EBM_MOCK_FORCED_503',
+        mode: this.mode,
+        endpoint,
+        status: 503,
+        payload,
+        retryable: true,
+      });
+    }
+
     switch (endpoint) {
       case VSDC_ENDPOINTS.INITIALIZE_DEVICE:
         return makeSuccessResponse({
@@ -590,6 +601,49 @@ class EBMService {
                   taxblAmt: 75000,
                   taxAmt: 0,
                   totAmt: 75000,
+                },
+              ],
+            },
+            {
+              spplrTin: '100000003',
+              spplrNm: 'KIGALI WHOLESALE LTD',
+              spplrInvcNo: `SUP-${formatVsdcDate()}-003`,
+              invcNo: `SUP-${formatVsdcDate()}-003`,
+              rcptTyCd: 'P',
+              pchsDt: formatVsdcDate(),
+              totTaxblAmt: 15000,
+              totTaxAmt: 1800,
+              totAmt: 16800,
+              itemList: [
+                {
+                  itemSeq: 1,
+                  itemCd: 'MOCK-MIX-B',
+                  itemClsCd: '43211500',
+                  itemNm: 'Taxable mixed purchase item',
+                  pkgUnitCd: 'NT',
+                  qtyUnitCd: 'U',
+                  qty: 1,
+                  prc: 10000,
+                  splyAmt: 10000,
+                  taxTyCd: 'B',
+                  taxblAmt: 10000,
+                  taxAmt: 1800,
+                  totAmt: 11800,
+                },
+                {
+                  itemSeq: 2,
+                  itemCd: 'MOCK-MIX-A',
+                  itemClsCd: '5059690800',
+                  itemNm: 'Exempt mixed purchase item',
+                  pkgUnitCd: 'NT',
+                  qtyUnitCd: 'U',
+                  qty: 1,
+                  prc: 5000,
+                  splyAmt: 5000,
+                  taxTyCd: 'A',
+                  taxblAmt: 5000,
+                  taxAmt: 0,
+                  totAmt: 5000,
                 },
               ],
             },

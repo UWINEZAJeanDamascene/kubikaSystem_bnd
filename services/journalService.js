@@ -8,6 +8,7 @@ const periodService = require('./periodService');
 const { BankAccount } = require('../models/BankAccount');
 const { PettyCashFloat } = require('../models/PettyCash');
 const TaxTransactionService = require('./taxTransactionService');
+const bankTransactionService = require('./bankTransactionService');
 
 /**
  * Validate that an account allows direct posting before creating journal lines
@@ -168,6 +169,17 @@ class JournalService {
         console.error('Failed to create tax transactions for journal entry:', taxErr.message);
         // Don't throw - tax transaction creation failure shouldn't block journal entry creation
       }
+
+      await bankTransactionService.createFromJournalEntry(saved, {
+        companyId: doc.company,
+        userId: doc.createdBy,
+        sourceType: doc.sourceType,
+        sourceId: doc.sourceId,
+        sourceReference: doc.sourceReference,
+        sourceData: options.sourceData || {},
+        bankAccountId: options.bankAccountId || options.sourceData?.bankAccountId || null,
+        session: sess
+      });
 
       // If no session provided (non-transactional create), invalidate caches (best-effort)
       if (!sess) {

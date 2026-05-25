@@ -1,0 +1,37 @@
+{
+    "pass":  "RealFlow123!",
+    "tenantA":  {
+                    "email":  "admin.a.20260525210819@example.com",
+                    "companyId":  "6a149e23eabc0d7fddad5364",
+                    "token":  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjZhMTQ5ZTIzZWFiYzBkN2ZkZGFkNTNiYyIsInVzZXJJZCI6IjZhMTQ5ZTIzZWFiYzBkN2ZkZGFkNTNiYyIsIm1lbWJlcnNoaXBzIjpbeyJjb21wYW55SWQiOiI2YTE0OWUyM2VhYmMwZDdmZGRhZDUzNjQiLCJyb2xlIjoiYWRtaW4ifV0sImlhdCI6MTc3OTczNjEzMSwiZXhwIjoxNzc5NzM5NzMxfQ.AvXGRI--NWT3Bb7BBIpYjHPpL2Tw5kiHyb02F1zBcME",
+                    "warehouseId":  "6a149ede0168cac15b983bcc",
+                    "categoryId":  "6a149f400168cac15b983c60",
+                    "clientId":  "6a149f400168cac15b983c69",
+                    "supplierId":  "6a149f400168cac15b983c72",
+                    "productBId":  "6a149f400168cac15b983c7c",
+                    "productAId":  "6a149f400168cac15b983c87"
+                },
+    "tenantB":  {
+                    "email":  "admin.b.20260525210819@example.com",
+                    "companyId":  "6a149e24eabc0d7fddad53c0",
+                    "token":  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjZhMTQ5ZTI0ZWFiYzBkN2ZkZGFkNTQxOCIsInVzZXJJZCI6IjZhMTQ5ZTI0ZWFiYzBkN2ZkZGFkNTQxOCIsIm1lbWJlcnNoaXBzIjpbeyJjb21wYW55SWQiOiI2YTE0OWUyNGVhYmMwZDdmZGRhZDUzYzAiLCJyb2xlIjoiYWRtaW4ifV0sImlhdCI6MTc3OTczNjEzMiwiZXhwIjoxNzc5NzM5NzMyfQ.rvrXBTJnVf5B8gETzzDBM8N-2tqCDaZlI2YRMe0Vs-o",
+                    "warehouseId":  "6a149ee00168cac15b983c0d",
+                    "categoryId":  "6a149f410168cac15b983caf",
+                    "clientId":  "6a149f410168cac15b983cb8",
+                    "supplierId":  "6a149f410168cac15b983cc1",
+                    "productBId":  "6a149f410168cac15b983ccb",
+                    "productAId":  "6a149f410168cac15b983cd6"
+                },
+    "stamp":  "20260525210819",
+    "test1InvoiceId":  "6a149f700168cac15b983d12",
+    "test2InvoiceId":  "6a149f8b0168cac15b983dcc",
+    "test3PosInvoiceId":  "6a14a0718ce5d29792bd6454",
+    "test4PoId":  "6a14a11df98f2c3c11d78437",
+    "test4GrnId":  "6a14a11df98f2c3c11d78453",
+    "test5PoId":  "6a14a143f98f2c3c11d784ce",
+    "test5GrnId":  "6a14a143f98f2c3c11d784ed",
+    "test6CreditNoteId":  "6a14a1faa039c4c240abea77",
+    "test6DraftInvoiceId":  "6a14a1fda039c4c240abeaea",
+    "test7InvoiceId":  "6a14a291a9dae13b5021cd0d",
+    "test7QueueId":  "6a14a291d0d8950c46107766"
+}

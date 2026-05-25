@@ -23,40 +23,19 @@ const {
   updateBankAccount,
   deleteBankAccount,
   getAccountTransactions,
+  getBankAccountBalance,
   addTransaction,
   transfer,
   transferToCash,
   getCashPosition,
-  reconcile,
   getAllTransactions,
   adjustBalance,
   getAccountStats,
   getBankStatement,
   importCSV,
-  autoMatchTransactions,
-  getReconciliationReport,
-  getReconciliation,
-  matchReconciliation,
-  unmatchReconciliation,
   createOpeningBalance,
   fixOpeningBalances,
 } = require("../controllers/bankAccountController");
-
-// New professional bank reconciliation controller
-const {
-  startReconciliation,
-  getReconciliationData,
-  suggestMatches,
-  matchItems,
-  unmatchItems,
-  ignoreStatementLine,
-  createAdjustingEntry,
-  completeReconciliation,
-  cancelReconciliation,
-  importStatement,
-  listReconciliations,
-  getReconciliationReport: getReconciliationReportNew,
-} = require("../controllers/bankReconciliationController");
 
 const { protect } = require("../middleware/auth");
 
@@ -94,75 +73,18 @@ router
   .get(getAccountTransactions)
   .post(addTransaction);
 
-router.route("/:id/reconcile").post(reconcile);
-
 router.route("/:id/adjust").post(adjustBalance);
 
 router.route("/:id/stats").get(getAccountStats);
+
+router.route("/:id/balance").get(getBankAccountBalance);
 
 router.route("/:id/statement").get(getBankStatement);
 
 // CSV Import
 router.route("/:id/import-csv").post(importCSV);
 
-// Auto-match
-router.route("/:id/auto-match").post(autoMatchTransactions);
-
-// Reconciliation routes
-router.route("/:id/reconciliation").get(getReconciliation);
-
-// Match reconciliation (POST creates, DELETE removes by matchId)
-router.route("/:id/reconciliation/match").post(matchReconciliation);
-
-// Unmatch a specific reconciliation match
-router
-  .route("/:id/reconciliation/match/:matchId")
-  .delete(unmatchReconciliation);
-
 // Opening balance (posts opening journal entry)
 router.route("/:id/opening-balance").post(createOpeningBalance);
-
-// Reconciliation Report (legacy)
-router.route("/:id/reconciliation-report").get(getReconciliationReport);
-
-// =====================================================
-// NEW PROFESSIONAL BANK RECONCILIATION ROUTES
-// =====================================================
-
-// Start a new reconciliation session
-router.route("/:id/reconciliation/start").post(startReconciliation);
-
-// Get reconciliation data (both sides - journal lines vs statement lines)
-router.route("/:id/reconciliation/data").get(getReconciliationData);
-
-// Auto-match suggestions
-router.route("/:id/reconciliation/suggest").get(suggestMatches);
-
-// User-approved matching (creates link only, no auto-modification)
-router.route("/:id/reconciliation/match-items").post(matchItems);
-
-// Unmatch items
-router.route("/:id/reconciliation/unmatch").post(unmatchItems);
-
-// Ignore a statement line
-router.route("/:id/reconciliation/ignore").post(ignoreStatementLine);
-
-// Create adjusting entry (user-explicit only)
-router.route("/:id/reconciliation/adjusting-entry").post(createAdjustingEntry);
-
-// Complete reconciliation (only if difference = 0)
-router.route("/:id/reconciliation/complete").post(completeReconciliation);
-
-// Cancel in-progress reconciliation
-router.route("/:id/reconciliation/cancel").post(cancelReconciliation);
-
-// Import statement CSV with proper date parsing
-router.route("/:id/reconciliation/import").post(csvUpload.single('file'), importStatement);
-
-// List all reconciliations (history)
-router.route("/:id/reconciliations").get(listReconciliations);
-
-// Get detailed reconciliation report (new)
-router.route("/:id/reconciliation/report").get(getReconciliationReportNew);
 
 module.exports = router;

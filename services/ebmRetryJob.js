@@ -54,11 +54,17 @@ async function updateSourceDocument(queueRecord, response = null, status = 'subm
     queueRecord.endpoint === ebmService.VSDC_ENDPOINTS.SAVE_STOCK_ITEMS
     || queueRecord.endpoint === ebmService.VSDC_ENDPOINTS.SAVE_STOCK_MASTER
   ) {
+    const ownsPrimaryStockStatus = ['GoodsReceivedNote', 'grn', 'Purchase', 'directPurchase', 'stockMovement', 'stockAdjustment', 'branchTransfer'].includes(queueRecord.documentType);
     incrementField = 'ebm.stockRetryCount';
     Object.assign(update, {
       'ebm.stockStatus': status === 'submitted' ? 'submitted' : 'failed',
       'ebm.stockSubmittedAt': status === 'submitted' ? now : null,
       'ebm.stockLastError': error ? error.message || 'EBM stock retry failed' : null,
+      ...(ownsPrimaryStockStatus ? {
+        'ebm.ebmStatus': status === 'submitted' ? 'submitted' : 'failed',
+        'ebm.submittedAt': status === 'submitted' ? now : null,
+        'ebm.lastError': error ? error.message || 'EBM stock retry failed' : null,
+      } : {}),
     });
   } else {
     Object.assign(update, {
@@ -72,6 +78,8 @@ async function updateSourceDocument(queueRecord, response = null, status = 'subm
   if (queueRecord.documentType === 'invoice' || queueRecord.documentType === 'pos') Model = models.Invoice;
   if (queueRecord.documentType === 'creditNote') Model = models.CreditNote;
   if (queueRecord.documentType === 'purchase') Model = models.PurchaseOrder || models.Purchase;
+  if (queueRecord.documentType === 'GoodsReceivedNote' || queueRecord.documentType === 'grn') Model = models.GoodsReceivedNote;
+  if (queueRecord.documentType === 'Purchase' || queueRecord.documentType === 'directPurchase') Model = models.Purchase;
   if (queueRecord.documentType === 'stockMovement' || queueRecord.documentType === 'stockAdjustment') Model = models.StockMovement;
   if (queueRecord.documentType === 'stockMaster') Model = models.StockMovement;
   if (queueRecord.documentType === 'branchTransfer') Model = models.StockTransfer;

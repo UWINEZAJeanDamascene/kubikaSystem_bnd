@@ -127,6 +127,8 @@ exports.createSale = async (req, res, next) => {
       customerTin: client.taxId || undefined,
       customerAddress: client.contact?.address || undefined,
       items: invoiceItems,
+      invoiceDate: new Date(),
+      dueDate: new Date(),
       createdBy: req.user.id,
       notes: notes || ''
     });
@@ -255,12 +257,26 @@ exports.createSale = async (req, res, next) => {
         ));
       }
       
-      // Credit: Sales Revenue
-      lines.push(JournalService.createCreditLine(
-        DEFAULT_ACCOUNTS.salesRevenue,
-        invoice.roundedAmount || invoice.totalAmount,
-        `POS Sale - ${invoice.invoiceNumber}`
-      ));
+      const grossAmount = Number(invoice.roundedAmount || invoice.totalAmount || 0);
+      const vatAmount = Number(invoice.totalTax || invoice.taxAmount || 0);
+      const netSalesAmount = Math.max(0, grossAmount - vatAmount);
+
+      // Credit: Sales Revenue (net of VAT) and VAT Output when applicable.
+      if (netSalesAmount > 0) {
+        lines.push(JournalService.createCreditLine(
+          DEFAULT_ACCOUNTS.salesRevenue,
+          netSalesAmount,
+          `POS Sale - ${invoice.invoiceNumber}`
+        ));
+      }
+
+      if (vatAmount > 0) {
+        lines.push(JournalService.createCreditLine(
+          DEFAULT_ACCOUNTS.vatOutput,
+          vatAmount,
+          `POS Sale - ${invoice.invoiceNumber} VAT`
+        ));
+      }
       
       await JournalService.createEntry(companyId, req.user.id, {
         date: new Date(),

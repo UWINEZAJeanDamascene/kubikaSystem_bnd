@@ -232,6 +232,7 @@ async function confirmMatchedDocument(doc, type, branchId = null) {
 
   try {
     await ebmService.savePurchases(payload);
+    doc.ebm.purchaseConfirmationPayload = payload;
     doc.ebm.ebmPurchaseMatchStatus = 'confirmed';
     doc.ebm.ebmConfirmedAt = new Date();
     doc.ebm.ebmStatus = 'submitted';
@@ -312,7 +313,10 @@ class EBMPurchaseService {
   static async processPurchaseDocument(companyId, doc, type, options = {}) {
     const branchId = normalizeBranchId(options.branchId || await resolveBranchIdForDocument(doc, companyId));
     try {
-      await this.syncPurchases(companyId, { branchId });
+      await this.syncPurchases(companyId, {
+        branchId,
+        prcOrdCd: doc.referenceNo || doc.purchaseNumber || doc.purchaseCode || String(doc._id),
+      });
       const Model = type === 'Purchase' ? Purchase : PurchaseOrder;
       const refreshed = await Model.findOne({ _id: doc._id, company: companyId });
       if (refreshed?.ebm?.ebmPurchaseMatchStatus === 'matched') {
@@ -342,7 +346,7 @@ class EBMPurchaseService {
   }
 
   static async syncDueCompanies() {
-    const intervalHours = Math.max(1, Number(process.env.EBM_PURCHASE_SYNC_INTERVAL_HOURS || 24));
+    const intervalHours = Math.max(1, Number(process.env.EBM_PURCHASE_SYNC_INTERVAL_HOURS || 6));
     const dueBefore = new Date(Date.now() - intervalHours * 60 * 60 * 1000);
     const devices = await EBMDevice.find({
       status: EBM_DEVICE_STATUSES.INITIALIZED,

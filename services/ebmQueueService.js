@@ -1,5 +1,6 @@
 const EBMSubmissionQueue = require('../models/EBMSubmissionQueue');
 const EBMAlert = require('../models/EBMAlert');
+const mongoose = require('mongoose');
 
 function toBoolRetryable(error) {
   return error?.retryable !== false;
@@ -115,7 +116,44 @@ async function resetForManualRetry(queueId, companyId) {
   item.nextRetryAt = new Date();
   item.resolvedAt = null;
   item.isRetryable = true;
-  return item.save();
+  const saved = await item.save();
+  await resetSourceDocumentStatus(saved).catch(() => {});
+  return saved;
+}
+
+async function resetSourceDocumentStatus(queueItem) {
+  const models = mongoose.models;
+  const isStockEndpoint = queueItem.endpoint === '/stock/saveStockItems'
+    || queueItem.endpoint === '/stockMaster/saveStockMaster';
+  let Model = null;
+  if (queueItem.documentType === 'invoice' || queueItem.documentType === 'pos') Model = models.Invoice;
+  if (queueItem.documentType === 'creditNote') Model = models.CreditNote;
+  if (queueItem.documentType === 'purchase') Model = models.PurchaseOrder || models.Purchase;
+  if (queueItem.documentType === 'GoodsReceivedNote' || queueItem.documentType === 'grn') Model = models.GoodsReceivedNote;
+  if (queueItem.documentType === 'Purchase' || queueItem.documentType === 'directPurchase') Model = models.Purchase;
+  if (queueItem.documentType === 'stockMovement' || queueItem.documentType === 'stockAdjustment') Model = models.StockMovement;
+  if (queueItem.documentType === 'branchTransfer') Model = models.StockTransfer;
+  if (!Model) return null;
+
+  const update = isStockEndpoint
+    ? {
+      'ebm.stockStatus': 'pending',
+      'ebm.stockLastError': null,
+      ...(['GoodsReceivedNote', 'Purchase', 'StockMovement', 'StockTransfer'].includes(Model.modelName)
+        ? { 'ebm.ebmStatus': 'pending', 'ebm.lastError': null }
+        : {}),
+    }
+    : {
+      'ebm.ebmStatus': 'pending',
+      'ebm.lastError': null,
+      'ebm.retryCount': 0,
+    };
+
+  return Model.findOneAndUpdate(
+    { _id: queueItem.documentId, $or: [{ company: queueItem.companyId }, { company_id: queueItem.companyId }] },
+    { $set: update },
+    { new: true },
+  );
 }
 
 async function createAbandonmentAlert(record) {
@@ -152,6 +190,7 @@ module.exports = {
   upsertFailure,
   markSubmitted,
   resetForManualRetry,
+  resetSourceDocumentStatus,
   createAbandonmentAlert,
   buildAttempt,
   normalizeError,

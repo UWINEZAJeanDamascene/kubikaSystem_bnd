@@ -170,10 +170,16 @@ async function buildMovementPayload(movementData, company, branch) {
 }
 
 async function updateDocumentStockStatus(Model, documentId, companyId, status, error = null) {
+  const usesPrimaryEbmStatus = ['GoodsReceivedNote', 'Purchase', 'StockMovement', 'StockTransfer'].includes(Model.modelName);
   const update = {
     'ebm.stockStatus': status,
     'ebm.stockLastError': error ? error.message || 'EBM stock submission failed' : null,
     ...(status === 'submitted' ? { 'ebm.stockSubmittedAt': new Date() } : {}),
+    ...(usesPrimaryEbmStatus ? {
+      'ebm.ebmStatus': status,
+      'ebm.lastError': error ? error.message || 'EBM stock submission failed' : null,
+      ...(status === 'submitted' ? { 'ebm.submittedAt': new Date() } : {}),
+    } : {}),
   };
   const inc = status === 'pending' || status === 'failed' ? { 'ebm.stockRetryCount': 1 } : {};
   return Model.findOneAndUpdate(
@@ -233,7 +239,10 @@ async function submitStockEvent({
   const company = await Company.findById(companyId).lean();
   if (!company) throw new Error('Company not found for EBM stock reporting.');
   const movementPayload = await buildMovementPayload(movementData, company, branch);
-  const context = { companyId, documentType, documentId };
+  const queueDocumentType = ['GoodsReceivedNote', 'Purchase'].includes(sourceModel.modelName)
+    ? sourceModel.modelName
+    : documentType;
+  const context = { companyId, documentType: queueDocumentType, documentId };
 
   try {
     await updateDocumentStockStatus(sourceModel, documentId, companyId, 'pending');

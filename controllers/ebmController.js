@@ -344,7 +344,10 @@ exports.retryQueueItem = async (req, res, next) => {
     const companyId = getCompanyId(req);
     const item = await EBMQueueService.resetForManualRetry(req.params.id, companyId);
     if (!item) return res.status(404).json({ success: false, message: 'EBM queue item not found' });
-    res.json({ success: true, data: item });
+    const { processRecord } = require('../services/ebmRetryJob');
+    const result = await processRecord(item);
+    const refreshed = await EBMSubmissionQueue.findOne({ _id: item._id, companyId }).lean();
+    res.json({ success: true, data: refreshed, result });
   } catch (error) {
     next(error);
   }

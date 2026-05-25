@@ -20,7 +20,7 @@ async function runPurchaseSync(reason = 'scheduled') {
 function startPurchaseSyncScheduler() {
   if (intervalHandle) return intervalHandle;
 
-  const intervalHours = Math.max(1, Number(process.env.EBM_PURCHASE_SYNC_INTERVAL_HOURS || 24));
+  const intervalHours = Math.max(1, Number(process.env.EBM_PURCHASE_SYNC_INTERVAL_HOURS || 6));
   const intervalMs = intervalHours * 60 * 60 * 1000;
 
   setTimeout(() => runPurchaseSync('startup'), 0);

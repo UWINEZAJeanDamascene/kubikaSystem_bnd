@@ -10,6 +10,7 @@
     "drop-category-unique-index": "node scripts/removeCategoryUniqueIndex.js",
     "test": "jest --runInBand --passWithNoTests",
     "migrate:journal": "node scripts/migrate_journal_engine.js",
+    "migrate:bank-transactions": "node scripts/backfillBankTransactionsFromJournalEntries.js",
     "seed:platform-admin": "node scripts/seedPlatformAdmin.js",
     "delivery-notes:backfill": "node scripts/backfillDeliveryNotes.js"
   },

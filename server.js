@@ -288,6 +288,7 @@ async function initializeServer() {
   apiRouter.use('/deferred-revenue', require('./routes/deferredRevenueRoutes'));
   apiRouter.use('/petty-cash', require('./routes/pettyCashRoutes'));
   apiRouter.use('/bank-accounts', require('./routes/bankAccountRoutes'));
+  apiRouter.use('/bank-reconciliation', require('./routes/bankReconciliationRoutes'));
   apiRouter.use('/interest', require('./routes/interestRoutes'));
   apiRouter.use('/purchase-returns', require('./routes/purchaseReturnRoutes'));
   apiRouter.use('/payables', require('./routes/payableRoutes'));

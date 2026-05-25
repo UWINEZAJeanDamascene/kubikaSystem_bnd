@@ -292,49 +292,76 @@ bankStatementLineSchema.index({ reconciliationId: 1, status: 1 });
 // Supports many-to-one and one-to-many matching
 const bankReconciliationMatchSchema = new mongoose.Schema(
   {
+    companyId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Company",
+      index: true,
+    },
+    sessionId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "BankReconciliationSession",
+      index: true,
+    },
+    bookTransactionId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "BankTransaction",
+      index: true,
+    },
+    statementTransactionId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "BankStatementTransaction",
+      index: true,
+    },
+    matchType: {
+      type: String,
+      enum: ["auto", "manual"],
+      default: "manual",
+    },
+    amount: {
+      type: Number,
+      min: 0,
+    },
+    notes: {
+      type: String,
+      default: null,
+    },
     // Bank statement line reference
     bankStatementLine: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "BankStatementLine",
-      required: true,
       index: true,
     },
     // Journal entry line reference (not entry - specifically the line)
     journalEntryLineId: {
       type: mongoose.Schema.Types.ObjectId,
-      required: true,
     },
     // Journal entry reference (for easier querying)
     journalEntry: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "JournalEntry",
-      required: true,
       index: true,
     },
     // Bank account reference
     bankAccount: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "BankAccount",
-      required: true,
       index: true,
     },
     // Company (tenant)
     company: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Company",
-      required: true,
       index: true,
     },
     // Who matched this
     matchedBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
-      required: true,
     },
     // Amount matched in this specific match
     matchedAmount: {
       type: mongoose.Schema.Types.Decimal128,
-      required: true,
+      required: false,
       get: function (value) {
         return value ? parseFloat(value.toString()) : 0;
       },
@@ -353,7 +380,11 @@ const bankReconciliationMatchSchema = new mongoose.Schema(
 // Compound unique index - same match can't be created twice
 bankReconciliationMatchSchema.index(
   { bankStatementLine: 1, journalEntryLineId: 1 },
-  { unique: true },
+  { unique: true, sparse: true },
+);
+bankReconciliationMatchSchema.index(
+  { sessionId: 1, bookTransactionId: 1, statementTransactionId: 1 },
+  { unique: true, sparse: true },
 );
 
 // Bank Account Transaction Schema (for tracking all movements - existing)
@@ -364,6 +395,11 @@ const bankTransactionSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "BankAccount",
       required: [true, "Transaction must be linked to a bank account"],
+    },
+    bankAccountId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "BankAccount",
+      index: true,
     },
     // Transaction type
     type: {
@@ -376,6 +412,8 @@ const bankTransactionSchema = new mongoose.Schema(
         "adjustment",
         "opening",
         "closing",
+        "debit",
+        "credit",
       ],
       required: true,
     },
@@ -390,9 +428,13 @@ const bankTransactionSchema = new mongoose.Schema(
       type: Number,
       required: true,
     },
+    balance: {
+      type: Number,
+      default: 0,
+    },
     // Reference to related document
     reference: {
-      type: mongoose.Schema.Types.ObjectId,
+      type: mongoose.Schema.Types.Mixed,
     },
     referenceType: {
       type: String,
@@ -470,10 +512,84 @@ const bankTransactionSchema = new mongoose.Schema(
       ref: "Company",
       required: false,
     },
+    companyId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Company",
+      index: true,
+    },
     // Journal entry linked to this transaction (for traceability)
     journalEntryId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "JournalEntry",
+      default: null,
+    },
+    journalEntryLineId: {
+      type: mongoose.Schema.Types.ObjectId,
+      default: null,
+      index: true,
+    },
+    transactionType: {
+      type: String,
+      enum: [
+        "customer_payment",
+        "supplier_payment",
+        "payroll",
+        "loan_receipt",
+        "loan_repayment",
+        "bank_transfer_in",
+        "bank_transfer_out",
+        "direct_purchase_payment",
+        "bank_charge",
+        "bank_interest",
+        "cash_deposit",
+        "cash_withdrawal",
+        "other",
+      ],
+      default: "other",
+      index: true,
+    },
+    sourceDocumentType: {
+      type: String,
+      enum: [
+        "invoice",
+        "credit_note",
+        "purchase_order",
+        "direct_purchase",
+        "payroll_run",
+        "loan",
+        "bank_transfer",
+        "journal_entry",
+        "other",
+      ],
+      default: "journal_entry",
+    },
+    sourceDocumentId: {
+      type: mongoose.Schema.Types.ObjectId,
+      default: null,
+    },
+    sourceReference: {
+      type: String,
+      default: null,
+    },
+    reconciliationStatus: {
+      type: String,
+      enum: ["unreconciled", "reconciled"],
+      default: "unreconciled",
+      index: true,
+    },
+    reconciledSessionId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "BankReconciliationSession",
+      default: null,
+      index: true,
+    },
+    isReversed: {
+      type: Boolean,
+      default: false,
+    },
+    reversalTransactionId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "BankTransaction",
       default: null,
     },
   },
@@ -481,6 +597,20 @@ const bankTransactionSchema = new mongoose.Schema(
     timestamps: true,
   },
 );
+
+bankTransactionSchema.pre("validate", function (next) {
+  if (!this.bankAccountId && this.account) this.bankAccountId = this.account;
+  if (!this.account && this.bankAccountId) this.account = this.bankAccountId;
+  if (!this.companyId && this.company) this.companyId = this.company;
+  if (!this.company && this.companyId) this.company = this.companyId;
+  if ((this.balance == null || Number.isNaN(this.balance)) && this.balanceAfter != null) this.balance = this.balanceAfter;
+  if ((this.balanceAfter == null || Number.isNaN(this.balanceAfter)) && this.balance != null) this.balanceAfter = this.balance;
+  next();
+});
+
+bankTransactionSchema.index({ companyId: 1, bankAccountId: 1, date: 1, _id: 1 });
+bankTransactionSchema.index({ companyId: 1, journalEntryId: 1, journalEntryLineId: 1 }, { sparse: true });
+bankTransactionSchema.index({ companyId: 1, bankAccountId: 1, reconciliationStatus: 1 });
 
 // Bank Account Schema (updated per Module 3.2)
 const bankAccountSchema = new mongoose.Schema(
@@ -939,6 +1069,21 @@ bankAccountSchema.methods.addTransaction = async function (transactionData) {
   console.log('[addTransaction] Starting - account:', this._id, 'name:', this.name, 'cachedBalance:', this.cachedBalance);
   const BankTransaction = mongoose.model("BankTransaction");
 
+  if (transactionData.journalEntryId) {
+    const duplicate = await BankTransaction.findOne({
+      $and: [
+        { $or: [{ companyId: this.company }, { company: this.company }] },
+        { $or: [{ bankAccountId: this._id }, { account: this._id }] },
+      ],
+      journalEntryId: transactionData.journalEntryId,
+      amount: Number(transactionData.amount || 0),
+    });
+    if (duplicate) {
+      console.log('[addTransaction] Existing journal-linked bank transaction found:', duplicate._id);
+      return duplicate;
+    }
+  }
+
   // Use cached balance
   const currentBal = parseFloat(this.cachedBalance?.toString() || "0");
   console.log('[addTransaction] currentBal:', currentBal);
@@ -968,8 +1113,11 @@ bankAccountSchema.methods.addTransaction = async function (transactionData) {
   const transaction = new BankTransaction({
     ...transactionData,
     account: this._id,
+    bankAccountId: this._id,
     company: this.company,
+    companyId: this.company,
     balanceAfter: newBal, // Now correctly AFTER the transaction
+    balance: newBal,
   });
 
   await transaction.save();

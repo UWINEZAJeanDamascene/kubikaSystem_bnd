@@ -1,0 +1,25 @@
+HTTP/1.1 409 Conflict
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Resource-Policy: same-origin
+Origin-Agent-Cluster: ?1
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=15552000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-DNS-Prefetch-Control: off
+X-Download-Options: noopen
+X-Frame-Options: SAMEORIGIN
+X-Permitted-Cross-Domain-Policies: none
+X-XSS-Protection: 0
+X-RateLimit-Limit: 100
+X-RateLimit-Remaining: 99
+X-RateLimit-Reset: 1779738306
+Vary: Origin, Accept-Encoding
+Access-Control-Allow-Credentials: true
+Content-Type: application/json; charset=utf-8
+Content-Length: 190
+ETag: W/"be-+Te4dMO4nlJUWteT9bZuAmH2H7E"
+Date: Mon, 25 May 2026 19:45:06 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+{"success":false,"code":"ERR_EBM_ORIGINAL_INVOICE_NOT_SUBMITTED","message":"Original invoice EBM submission is still pending. Wait until it is submitted before confirming this credit note."}

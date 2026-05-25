@@ -20,7 +20,7 @@ async function runImportSync(reason = 'scheduled') {
 function startImportSyncScheduler() {
   if (intervalHandle) return intervalHandle;
 
-  const intervalHours = Math.max(1, Number(process.env.EBM_IMPORT_SYNC_INTERVAL_HOURS || 24));
+  const intervalHours = Math.max(1, Number(process.env.EBM_IMPORT_SYNC_INTERVAL_HOURS || 12));
   const intervalMs = intervalHours * 60 * 60 * 1000;
 
   setTimeout(() => runImportSync('startup'), 0);

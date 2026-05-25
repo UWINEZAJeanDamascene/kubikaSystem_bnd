@@ -24,6 +24,7 @@ const ebmSubmissionSchema = new mongoose.Schema({
   qrCode: { type: String, default: null, trim: true },
   salesPayload: { type: mongoose.Schema.Types.Mixed, default: null },
   ebmPurchaseData: { type: mongoose.Schema.Types.Mixed, default: null },
+  purchaseConfirmationPayload: { type: mongoose.Schema.Types.Mixed, default: null },
   ebmConfirmedAt: { type: Date, default: null },
   ebmPurchaseSalesInvcNo: { type: String, default: null, trim: true },
   ebmPurchaseMatchStatus: {

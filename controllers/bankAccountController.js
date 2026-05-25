@@ -142,14 +142,21 @@ exports.getBankAccounts = async (req, res, next) => {
 
         // Sum inflows and outflows from BankTransaction (account-specific)
         const txAgg = await BankTransaction.aggregate([
-          { $match: { account: account._id } },
+          {
+            $match: {
+              $and: [
+                { $or: [{ companyId }, { company: companyId }] },
+                { $or: [{ bankAccountId: account._id }, { account: account._id }] },
+              ],
+            },
+          },
           {
             $group: {
               _id: null,
               totalIn: {
                 $sum: {
                   $cond: [
-                    { $in: ["$type", ["deposit", "transfer_in"]] },
+                    { $in: ["$type", ["deposit", "transfer_in", "debit", "opening"]] },
                     "$amount",
                     0,
                   ],
@@ -159,7 +166,7 @@ exports.getBankAccounts = async (req, res, next) => {
                 $sum: {
                   $cond: [
                     {
-                      $in: ["$type", ["withdrawal", "transfer_out", "closing"]],
+                      $in: ["$type", ["withdrawal", "transfer_out", "credit", "closing"]],
                     },
                     "$amount",
                     0,
@@ -178,6 +185,8 @@ exports.getBankAccounts = async (req, res, next) => {
           cachedBalance: computedBalance,
           currentBalance: computedBalance,
           computedFromTransactions: true,
+          lastTransactionDate: null,
+          reconciledThrough: null,
         };
       }),
     );
@@ -465,11 +474,18 @@ exports.getAccountTransactions = async (req, res, next) => {
         .json({ success: false, message: "Bank account not found" });
     }
 
-    // First try to get transactions from BankTransaction collection
-    const query = { account: req.params.id };
+    const query = {
+      $and: [
+        { $or: [{ companyId }, { company: companyId }] },
+        { $or: [{ bankAccountId: req.params.id }, { account: req.params.id }] },
+      ],
+    };
 
     if (type) {
-      query.type = type;
+      query.$and.push({ $or: [{ transactionType: type }, { type }] });
+    }
+    if (req.query.reconciliationStatus) {
+      query.reconciliationStatus = req.query.reconciliationStatus;
     }
 
     if (startDate || endDate) {
@@ -480,7 +496,7 @@ exports.getAccountTransactions = async (req, res, next) => {
 
     let transactions = await BankTransaction.find(query)
       .populate("createdBy", "name email")
-      .sort({ date: -1 })
+      .sort({ date: 1, _id: 1 })
       .skip((page - 1) * limit)
       .limit(parseInt(limit));
 
@@ -488,10 +504,17 @@ exports.getAccountTransactions = async (req, res, next) => {
 
     // Calculate totals per type
     const totals = await BankTransaction.aggregate([
-      { $match: { account: new mongoose.Types.ObjectId(req.params.id) } },
+      {
+        $match: {
+          $and: [
+            { $or: [{ companyId: new mongoose.Types.ObjectId(companyId) }, { company: new mongoose.Types.ObjectId(companyId) }] },
+            { $or: [{ bankAccountId: new mongoose.Types.ObjectId(req.params.id) }, { account: new mongoose.Types.ObjectId(req.params.id) }] },
+          ],
+        },
+      },
       {
         $group: {
-          _id: "$type",
+          _id: "$transactionType",
           total: { $sum: "$amount" },
           count: { $sum: 1 },
         },
@@ -506,6 +529,47 @@ exports.getAccountTransactions = async (req, res, next) => {
       totals,
       data: transactions,
       source: "bank_transactions",
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Get bank account balance from bank transactions and General Ledger
+// @route   GET /api/bank-accounts/:id/balance
+// @access  Private
+exports.getBankAccountBalance = async (req, res, next) => {
+  try {
+    const companyId = req.user.company._id;
+    const account = await BankAccount.findOne({ _id: req.params.id, company: companyId });
+    if (!account) return res.status(404).json({ success: false, message: "Bank account not found" });
+
+    const latest = await BankTransaction.findOne({
+      $and: [
+        { $or: [{ companyId }, { company: companyId }] },
+        { $or: [{ bankAccountId: req.params.id }, { account: req.params.id }] },
+      ],
+    }).sort({ date: -1, createdAt: -1, _id: -1 }).lean();
+    const bankTransactionBalance = Number(latest?.balance ?? latest?.balanceAfter ?? account.openingBalance ?? 0);
+    const ledgerAccountId = String(account.ledgerAccountId || "1100");
+    const rows = await JournalEntry.aggregate([
+      { $match: { company: new mongoose.Types.ObjectId(companyId), status: "posted", "lines.accountCode": ledgerAccountId } },
+      { $unwind: "$lines" },
+      { $match: { "lines.accountCode": ledgerAccountId } },
+      { $group: { _id: null, debit: { $sum: { $toDouble: "$lines.debit" } }, credit: { $sum: { $toDouble: "$lines.credit" } } } },
+    ]);
+    const glBalance = Number(account.openingBalance?.toString?.() || account.openingBalance || 0) + (rows[0]?.debit || 0) - (rows[0]?.credit || 0);
+    const difference = Math.round((bankTransactionBalance - glBalance) * 100) / 100;
+    res.json({
+      success: true,
+      data: {
+        bankAccountId: account._id,
+        bankTransactionBalance,
+        generalLedgerBalance: glBalance,
+        difference,
+        isInAgreement: Math.abs(difference) < 0.01,
+        asOf: new Date(),
+      },
     });
   } catch (error) {
     next(error);
@@ -1489,7 +1553,12 @@ exports.getBankStatement = async (req, res, next) => {
         .json({ success: false, message: "Bank account not found" });
     }
 
-    const query = { account: req.params.id };
+    const query = {
+      $and: [
+        { $or: [{ companyId }, { company: companyId }] },
+        { $or: [{ bankAccountId: req.params.id }, { account: req.params.id }] },
+      ],
+    };
 
     if (startDate || endDate) {
       query.date = {};
@@ -1501,23 +1570,19 @@ exports.getBankStatement = async (req, res, next) => {
       .populate("createdBy", "name")
       .sort({ date: 1 });
 
-    // Calculate running balance
-    let runningBalance = account.openingBalance;
     const statement = transactions.map((t) => {
-      if (
-        t.type === "deposit" ||
-        t.type === "transfer_in" ||
-        t.type === "opening"
-      ) {
-        runningBalance += t.amount;
-      } else {
-        runningBalance -= t.amount;
-      }
+      const moneyIn = ["debit", "deposit", "transfer_in", "opening"].includes(t.type) ? t.amount : 0;
+      const moneyOut = ["credit", "withdrawal", "transfer_out", "closing"].includes(t.type) ? t.amount : 0;
       return {
         ...t.toObject(),
-        runningBalance,
+        moneyIn,
+        moneyOut,
+        runningBalance: t.balance ?? t.balanceAfter,
       };
     });
+    const closingBalance = statement.length
+      ? statement[statement.length - 1].runningBalance
+      : Number(account.openingBalance?.toString?.() || account.openingBalance || 0);
 
     res.json({
       success: true,
@@ -1533,7 +1598,7 @@ exports.getBankStatement = async (req, res, next) => {
           end: endDate,
         },
         openingBalance: account.openingBalance,
-        closingBalance: runningBalance,
+        closingBalance,
         transactions: statement,
       },
     });

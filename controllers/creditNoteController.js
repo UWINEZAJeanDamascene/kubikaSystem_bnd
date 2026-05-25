@@ -570,13 +570,16 @@ exports.approveCreditNote = async (req, res, next) => {
     note.ebm.orgRcptNo = String(originalInvoiceForEbm.ebm.rcptNo);
     note.ebm.rfdRsnCd = refundRsnCd;
 
+    const creditAmount = Number(note.totalAmount || note.grandTotal || note.total || 0);
+    const creditTax = Number(note.taxAmount || note.totalTax || 0);
+
     // Update client balance
     const client = await Client.findOne({
       _id: note.client,
       company: companyId,
     });
     if (client) {
-      client.outstandingBalance -= note.grandTotal;
+      client.outstandingBalance = Number(client.outstandingBalance || 0) - creditAmount;
       if (client.outstandingBalance < 0) client.outstandingBalance = 0;
       await client.save();
     }
@@ -592,12 +595,11 @@ exports.approveCreditNote = async (req, res, next) => {
         invoice.creditNotes.push({
           creditNoteId: note._id,
           creditNoteNumber: note.creditNoteNumber,
-          amount: note.grandTotal,
+          amount: creditAmount,
           appliedDate: new Date(),
         });
 
         // Reduce the invoice balance by the credit note amount
-        const creditAmount = note.grandTotal;
         invoice.balance = Math.max(0, (invoice.balance || 0) - creditAmount);
 
         // Update invoice status based on new balance - but keep 'paid' status if it was paid
@@ -765,8 +767,8 @@ exports.approveCreditNote = async (req, res, next) => {
         _id: note._id,
         creditNoteNumber: note.creditNoteNumber,
         date: note.date,
-        total: note.grandTotal,
-        vatAmount: note.totalTax,
+        total: creditAmount,
+        vatAmount: creditTax,
         refundMethod: refundMethod,
         bankAccountCode: bankAccountCode,
         inventoryCost: inventoryCost,
