@@ -182,6 +182,8 @@ async function initializeServer() {
         'https://stockmanagementbackend-ikuq.onrender.com',
         'https://stock-tenancy-bnd.vercel.app',
         'https://stock-tenancy-system.onrender.com',
+        'https://kubika-system.vercel.app',
+        'https://kubikasystem-bnd.onrender.com',
         'https://stock-management-frontend-ten.vercel.app/ '
       ];
       if (hardcoded.includes(origin)) return callback(null, true);
