@@ -1496,11 +1496,14 @@ exports.recordPayment = async (req, res, next) => {
       }
 
       journalEntry = await JournalService.createInvoicePaymentEntry(companyId, req.user.id, {
+        invoiceId: invoice._id,
         invoiceNumber: invoice.invoiceNumber,
         date: new Date(),
         amount: amount,
         paymentMethod: paymentMethod,
         bankAccountCode: bankAccountCode,
+        bankAccountId: req.body.bankAccountId || null,
+        customerName: client?.name || "Customer",
       });
     } catch (journalError) {
       console.error("Error creating journal entry for payment:", journalError);

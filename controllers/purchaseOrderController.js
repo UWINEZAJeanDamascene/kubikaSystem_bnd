@@ -348,8 +348,8 @@ exports.recordPOPayment = async (req, res, next) => {
       // Use specific bank account if provided
       if (bankAccountId) {
         const bankAccount = await BankAccount.findOne({ _id: bankAccountId, company: companyId });
-        if (bankAccount && bankAccount.accountCode) {
-          bankAccountCode = bankAccount.accountCode;
+        if (bankAccount && bankAccount.ledgerAccountId) {
+          bankAccountCode = bankAccount.ledgerAccountId;
         }
       }
 

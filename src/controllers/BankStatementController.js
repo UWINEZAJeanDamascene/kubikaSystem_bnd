@@ -5,7 +5,7 @@
  * Endpoint: POST /api/v1/bank-accounts/:id/statement/import
  */
 
-const BankAccount = require('../../models/BankAccount');
+const BankAccount = require('../../models/BankAccount'); 
 const CsvParser = require('../imports/parsers/CsvParser');
 const OfxParser = require('../imports/parsers/OfxParser');
 
