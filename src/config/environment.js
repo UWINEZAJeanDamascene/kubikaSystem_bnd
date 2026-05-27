@@ -181,7 +181,7 @@ function buildConfig() {
       smtpUser: process.env.SMTP_USER || null,
       smtpPass: process.env.SMTP_PASS || null,
       fromAddress: process.env.EMAIL_FROM_ADDRESS || null,
-      fromName: process.env.EMAIL_FROM_NAME || 'StockManagement',
+      fromName: process.env.EMAIL_FROM_NAME || 'KUBIKA system',
     },
     
     // =====================

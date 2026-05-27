@@ -399,7 +399,7 @@ async function initializeServer() {
   app.get('/', (req, res) => {
     res.status(200).json({ 
       status: 'OK',
-      message: 'Stock Management System API',
+      message: 'KUBIKA system API',
       endpoints: [
         '/api/auth',
         '/api/companies',

@@ -21,7 +21,7 @@ class ExcelFormatter {
     } = options;
 
     const workbook = new ExcelJS.Workbook();
-    workbook.creator = 'Stock Management System';
+    workbook.creator = 'KUBIKA system';
     workbook.created = new Date();
 
     const worksheet = workbook.addWorksheet(sheetName);
@@ -120,7 +120,7 @@ class ExcelFormatter {
    */
   static async createMultiSheet(sheets, options = {}) {
     const workbook = new ExcelJS.Workbook();
-    workbook.creator = 'Stock Management System';
+    workbook.creator = 'KUBIKA system';
     workbook.created = new Date();
 
     for (const [sheetName, sheetData] of Object.entries(sheets)) {

@@ -1,4 +1,4 @@
-# Stock Management System - API Documentation
+# KUBIKA system - API Documentation
 
 ## Base URL
 ```

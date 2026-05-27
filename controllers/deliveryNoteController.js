@@ -106,7 +106,7 @@ const sendDeliveryNoteEmail = async (deliveryNote, companyId, action) => {
             <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}/delivery-notes/${deliveryNote._id}" style="background:#10b981; color:white; padding:12px 30px; text-decoration:none; border-radius:8px; display:inline-block;">View Delivery Note</a>
           </div>
           <hr style="border:none; border-top:1px solid #ddd; margin:30px 0;"/>
-          <p style="font-size:12px; color:#888; text-align:center;">StockManager — Manage Your Stock From Supply to Final Sale</p>
+          <p style="font-size:12px; color:#888; text-align:center;">KUBIKA SYSTEM — Manage Your Stock From Supply to Final Sale</p>
         </div>
       </div>`;
 

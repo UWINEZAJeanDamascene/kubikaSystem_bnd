@@ -359,10 +359,10 @@ exports.testEmail = async (req, res, next) => {
     
     const result = await emailService.sendEmail(
       email,
-      'Test Notification - Stock Management System',
+      'Test Notification - KUBIKA SYSTEM',
       `
       <h2>Test Notification</h2>
-      <p>This is a test email from your Stock Management System.</p>
+      <p>This is a test email from your KUBIKA SYSTEM.</p>
       <p>If you received this, your email notifications are configured correctly!</p>
       `
     );
@@ -400,7 +400,7 @@ exports.testSMS = async (req, res, next) => {
     
     const result = await smsService.sendSMS(
       phone,
-      'This is a test SMS from your Stock Management System. If you received this, your SMS notifications are configured correctly!'
+      'This is a test SMS from your KUBIKA system. If you received this, your SMS notifications are configured correctly!'
     );
     
     if (result.success) {
