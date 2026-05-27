@@ -18,5 +18,7 @@ services:
       - key: REDIS_URL
         sync: false
       - key: FRONTEND_URL
-        value: https://stock-management-frontend-ten.vercel.app
+        value: https://kubika-system.vercel.app
+      - key: CORS_ORIGINS
+        value: https://kubika-system.vercel.app
     autoDeploy: true
