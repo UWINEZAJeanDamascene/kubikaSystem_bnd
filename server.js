@@ -127,6 +127,16 @@ async function initializeServer() {
 
   app = express();
 
+  // Normalize accidental double slashes from deployed API base URLs with a trailing slash.
+  app.use((req, res, next) => {
+    const [pathname, query = ''] = req.url.split('?');
+    const normalizedPath = pathname.replace(/\/{2,}/g, '/');
+    if (normalizedPath !== pathname) {
+      req.url = normalizedPath + (query ? `?${query}` : '');
+    }
+    next();
+  });
+
   // Security middleware — XSS, clickjacking, MIME sniffing protection
   app.use(helmet({
     contentSecurityPolicy: NODE_ENV === 'production',
@@ -324,6 +334,7 @@ async function initializeServer() {
 
   app.use('/api', apiRouter);
   app.use('/api/v1', apiRouter);
+  app.use('/auth', require('./routes/authRoutes'));
 
   // Test-only upload endpoint (no auth) to validate upload middleware and storage
   // NOTE: This is temporary for debugging; remove or protect in production.
