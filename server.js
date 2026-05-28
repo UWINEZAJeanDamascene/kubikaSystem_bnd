@@ -111,8 +111,10 @@ async function initializeServer() {
   require('./models/EBMSyncState');
   require('./models/EBMImportedItem');
   require('./models/EBMUnmatchedPurchase');
-  require('./models/EBMSubmissionQueue');
-  require('./models/SalesOrder');
+   require('./models/EBMSubmissionQueue');
+   require('./models/SalesOrder');
+   require('./models/ImportTemplate');
+   require('./models/ImportLog');
    require('./models/PickPack');
    require('./models/ARTransactionLedger');
    require('./models/APTransactionLedger');
@@ -308,7 +310,7 @@ async function initializeServer() {
   apiRouter.use('/ap-reconciliation', require('./routes/apReconciliationRoutes'));
   apiRouter.use('/delivery-notes', require('./routes/deliveryNoteRoutes'));
   apiRouter.use('/departments', require('./routes/departmentRoutes'));
-  apiRouter.use('/bulk', require('./routes/bulkDataRoutes'));
+  apiRouter.use('/imports', require('./routes/importsRoutes'));
   apiRouter.use('/audit-trail', require('./routes/auditTrailRoutes'));
   apiRouter.use('/chat', require('./routes/aiChatRoutes'));
   apiRouter.use('/journal-entries', require('./routes/journalRoutes'));
@@ -331,6 +333,15 @@ async function initializeServer() {
   // Import/Export routes (PHASE 5)
   apiRouter.use('/import', require('./src/routes/v1/import.routes'));
   apiRouter.use('/export', require('./src/routes/v1/export.routes'));
+
+  try {
+    const { markInterruptedMemoryJobs } = require('./services/importQueueService');
+    markInterruptedMemoryJobs().catch((error) => {
+      console.error('[Imports] Failed to mark interrupted memory fallback jobs:', error.message);
+    });
+  } catch (error) {
+    console.error('[Imports] Startup fallback check failed:', error.message);
+  }
 
   app.use('/api', apiRouter);
   app.use('/api/v1', apiRouter);

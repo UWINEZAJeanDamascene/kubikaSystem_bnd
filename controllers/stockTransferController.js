@@ -5,11 +5,34 @@ const StockTransferLine = require("../models/StockTransferLine");
 const stockTransferService = require("../services/stockTransferService");
 const StockLevel = require("../models/StockLevel");
 const EBMStockService = require("../services/ebmStockService");
+const crypto = require("crypto");
+
+function transferSignature(action, req, notes = "") {
+  const userId = req.user?.id || req.user?._id;
+  const raw = [
+    action,
+    userId,
+    req.params?.id || "",
+    req.ip || "",
+    req.get?.("user-agent") || "",
+    new Date().toISOString(),
+  ].join("|");
+  return {
+    action,
+    signedBy: userId,
+    signedAt: new Date(),
+    signatureHash: crypto.createHash("sha256").update(raw).digest("hex"),
+    ipAddress: req.ip,
+    userAgent: req.get?.("user-agent"),
+    notes,
+  };
+}
 
 exports.create = async (req, res, next) => {
   try {
     const companyId = req.user.company._id;
     const payload = { ...req.body, company: companyId, createdBy: req.user.id };
+    payload.signatures = [transferSignature("created", req, req.body.notes || "")];
     const transfer = await StockTransfer.create(payload);
     res.status(201).json({ success: true, data: transfer });
   } catch (err) {
@@ -45,6 +68,13 @@ exports.confirm = async (req, res, next) => {
       req.params.id,
       {},
     );
+    transfer.confirmedBy = req.user.id || req.user._id;
+    transfer.confirmedAt = transfer.confirmedAt || new Date();
+    transfer.signatures = [
+      ...(transfer.signatures || []),
+      transferSignature("confirmed", req, req.body?.notes || "Transfer confirmed"),
+    ];
+    await transfer.save();
     EBMStockService.submitBranchTransfer(transfer._id, {
       companyId: transfer.company || req.user.company._id,
     }).catch((ebmErr) => {
@@ -72,6 +102,11 @@ exports.cancel = async (req, res, next) => {
       req.params.id,
       {},
     );
+    transfer.signatures = [
+      ...(transfer.signatures || []),
+      transferSignature("cancelled", req, req.body?.notes || "Transfer cancelled"),
+    ];
+    await transfer.save();
     res.json({ success: true, data: transfer });
   } catch (err) {
     next(err);

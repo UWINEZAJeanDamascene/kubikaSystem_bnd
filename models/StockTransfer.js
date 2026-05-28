@@ -1,6 +1,30 @@
 const mongoose = require('mongoose');
 const ebmSubmissionSchema = require('./schemas/ebmSubmissionSchema');
 
+const transferSignatureSchema = new mongoose.Schema({
+  action: {
+    type: String,
+    enum: ['created', 'confirmed', 'received', 'cancelled'],
+    required: true
+  },
+  signedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true
+  },
+  signedAt: {
+    type: Date,
+    default: Date.now
+  },
+  signatureHash: {
+    type: String,
+    required: true
+  },
+  ipAddress: String,
+  userAgent: String,
+  notes: String
+}, { _id: false });
+
 // Items are stored in a separate `StockTransferLine` model to preserve
 // per-line Decimal128 precision and audit history.
 
@@ -66,6 +90,10 @@ const stockTransferSchema = new mongoose.Schema({
   receivedNotes: String,
   // Reference to related documents
   referenceNumber: String,
+  signatures: {
+    type: [transferSignatureSchema],
+    default: []
+  },
   // Linked journal entry (if posted on confirmation)
   journalEntry: {
     type: mongoose.Schema.Types.ObjectId,

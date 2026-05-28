@@ -62,6 +62,35 @@ const systemSettingsSchema = new mongoose.Schema({
   },
 
   // ── APPROVAL WORKFLOWS ────────────────────────────────────────
+  auto_reorder_enabled: {
+    type: Boolean,
+    default: true
+  },
+  auto_reorder_create_documents: {
+    type: Boolean,
+    default: true
+  },
+  auto_reorder_safety_stock_days: {
+    type: Number,
+    default: 7,
+    min: 0
+  },
+  auto_reorder_sales_lookback_days: {
+    type: Number,
+    default: 90,
+    min: 1
+  },
+  auto_reorder_direct_purchase_threshold: {
+    type: Number,
+    default: 0,
+    min: 0
+  },
+  auto_reorder_created_by: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    default: null
+  },
+
   require_po_approval: {
     type: Boolean,
     default: true

@@ -688,6 +688,48 @@ exports.checkLowStockAndNotify = async (req, res, next) => {
   }
 };
 
+exports.analyzeReorder = async (req, res, next) => {
+  try {
+    const company = req.user && req.user.company;
+    const companyId = (company && company._id) ? company._id : company;
+    const AutoPurchaseOrderService = require('../services/autoPurchaseOrderService');
+    const result = await AutoPurchaseOrderService.analyzeItem({
+      companyId,
+      productId: req.params.id
+    });
+
+    if (!result) {
+      return res.status(404).json({ success: false, message: 'Product not found or not reorderable' });
+    }
+
+    res.json({ success: true, data: result });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.triggerAutoReorder = async (req, res, next) => {
+  try {
+    const company = req.user && req.user.company;
+    const companyId = (company && company._id) ? company._id : company;
+    const AutoPurchaseOrderService = require('../services/autoPurchaseOrderService');
+    const result = await AutoPurchaseOrderService.checkAndCreateForItem({
+      companyId,
+      productId: req.params.id,
+      performedBy: req.user.id || req.user._id,
+      force: req.body?.force === true
+    });
+
+    if (!result) {
+      return res.status(404).json({ success: false, message: 'Product not found or not reorderable' });
+    }
+
+    res.json({ success: true, data: result });
+  } catch (error) {
+    next(error);
+  }
+};
+
 // @desc    Get product barcode image (PNG)
 // @route   GET /api/products/:id/barcode
 // @access  Private

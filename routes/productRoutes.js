@@ -12,6 +12,8 @@ const {
   getProductLifecycle,
   getLowStockProducts,
   checkLowStockAndNotify,
+  analyzeReorder,
+  triggerAutoReorder,
   registerProductWithEBM
 } = require('../controllers/productController');
 const { protect } = require('../middleware/auth');
@@ -40,6 +42,8 @@ router.route('/:id')
 router.put('/:id/archive', requirePermission('products', 'delete'), logAction('product'), archiveProduct);
 router.put('/:id/restore', requirePermission('products', 'update'), logAction('product'), restoreProduct);
 router.post('/:id/ebm/register', requirePermission('products', 'update'), logAction('product'), registerProductWithEBM);
+router.get('/:id/reorder-analysis', requirePermission('products', 'read'), analyzeReorder);
+router.post('/:id/auto-reorder', requirePermission('products', 'update'), logAction('product'), triggerAutoReorder);
 router.get('/:id/history', requirePermission('products', 'read'), getProductHistory);
 router.get('/:id/lifecycle', requirePermission('products', 'read'), getProductLifecycle);
 // Barcode and QR code endpoints

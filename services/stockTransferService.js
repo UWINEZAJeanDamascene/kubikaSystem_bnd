@@ -103,9 +103,9 @@ async function confirmTransfer(transferId, opts = {}) {
       transferValue += totalCost;
 
       // transfer out movement (source)
-      await StockMovement.create([{ company: transfer.company, product: r.product, warehouse: transfer.fromWarehouse, type: 'transfer_out', source_type: 'transfer', source_id: transfer._id, quantity: qty, unitCost, totalCost }], { session });
+      await StockMovement.create([{ company: transfer.company, product: r.product, warehouse: transfer.fromWarehouse, type: 'out', reason: 'transfer_out', referenceType: 'other', referenceModel: 'StockTransfer', referenceDocument: transfer._id, quantity: Decimal.fromString(String(qty)), unitCost: Decimal.fromString(String(unitCost)), totalCost: Decimal.fromString(String(totalCost)) }], { session });
       // transfer in movement (destination)
-      await StockMovement.create([{ company: transfer.company, product: r.product, warehouse: transfer.toWarehouse, type: 'transfer_in', source_type: 'transfer', source_id: transfer._id, quantity: qty, unitCost, totalCost }], { session });
+      await StockMovement.create([{ company: transfer.company, product: r.product, warehouse: transfer.toWarehouse, type: 'in', reason: 'transfer_in', referenceType: 'other', referenceModel: 'StockTransfer', referenceDocument: transfer._id, quantity: Decimal.fromString(String(qty)), unitCost: Decimal.fromString(String(unitCost)), totalCost: Decimal.fromString(String(totalCost)) }], { session });
 
       // update product currentStock and warehouse-level onHand via InventoryBatch/Layer adjustments
       // Decrement source onHand (assume Product.currentStock represents company-wide; warehouse-specific handled by layers/batches already)
@@ -187,8 +187,8 @@ async function cancelTransfer(transferId, opts = {}) {
       const qty = Number(line.qty.toString());
       const unitCost = line.unitCost ? Number(line.unitCost.toString()) : 0;
       const totalCost = qty * unitCost;
-      await StockMovement.create([{ company: transfer.company, product: line.product, warehouse: transfer.toWarehouse, type: 'transfer_out', source_type: 'transfer_cancel', source_id: transfer._id, quantity: qty, unitCost, totalCost }], { session });
-      await StockMovement.create([{ company: transfer.company, product: line.product, warehouse: transfer.fromWarehouse, type: 'transfer_in', source_type: 'transfer_cancel', source_id: transfer._id, quantity: qty, unitCost, totalCost }], { session });
+      await StockMovement.create([{ company: transfer.company, product: line.product, warehouse: transfer.toWarehouse, type: 'out', reason: 'transfer_out', referenceType: 'other', referenceModel: 'StockTransfer', referenceDocument: transfer._id, quantity: Decimal.fromString(String(qty)), unitCost: Decimal.fromString(String(unitCost)), totalCost: Decimal.fromString(String(totalCost)) }], { session });
+      await StockMovement.create([{ company: transfer.company, product: line.product, warehouse: transfer.fromWarehouse, type: 'in', reason: 'transfer_in', referenceType: 'other', referenceModel: 'StockTransfer', referenceDocument: transfer._id, quantity: Decimal.fromString(String(qty)), unitCost: Decimal.fromString(String(unitCost)), totalCost: Decimal.fromString(String(totalCost)) }], { session });
       // restore product currentStock
       const prod = await Product.findById(line.product).session(session);
       prod.currentStock = Decimal.fromString(String(Number(prod.currentStock || 0) + qty));

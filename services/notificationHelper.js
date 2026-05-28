@@ -10,6 +10,7 @@ const NOTIFICATION_TYPES = {
   LOW_STOCK: 'low_stock',
   STOCK_RECEIVED: 'stock_received',
   AUTO_PO_CREATED: 'auto_po_created',
+  AUTO_DIRECT_PURCHASE_CREATED: 'auto_direct_purchase_created',
   
   // Invoice Alerts
   INVOICE_CREATED: 'invoice_created',
@@ -186,6 +187,24 @@ const notifyAutoPurchaseOrderCreated = async (companyId, product, purchaseOrder,
   })));
 
   return notifications.flat();
+};
+
+const notifyAutoDirectPurchaseCreated = async (companyId, product, purchase, currentStock) => {
+  const reference = purchase.purchaseNumber || purchase._id;
+  return createNotification({
+    companyId,
+    type: NOTIFICATION_TYPES.AUTO_DIRECT_PURCHASE_CREATED,
+    title: 'Auto Direct Purchase Draft Created',
+    message: `${product.name} (${product.sku || 'N/A'}) reached ${currentStock} in stock. Draft direct purchase ${reference} was created for review.`,
+    severity: SEVERITY.WARNING,
+    link: `/purchases/${purchase._id}`,
+    metadata: {
+      productId: product._id,
+      purchaseId: purchase._id,
+      purchaseNumber: purchase.purchaseNumber,
+      currentStock
+    }
+  });
 };
 
 /**
@@ -419,6 +438,7 @@ module.exports = {
   notifyOutOfStock,
   notifyStockReceived,
   notifyAutoPurchaseOrderCreated,
+  notifyAutoDirectPurchaseCreated,
   // Invoice
   notifyInvoiceCreated,
   notifyPaymentReceived,
