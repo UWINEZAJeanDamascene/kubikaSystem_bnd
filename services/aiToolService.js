@@ -24,7 +24,10 @@ const Liability = require('../models/Liability');
 const CreditNote = require('../models/CreditNote');
 const Quotation = require('../models/Quotation');
 const GoodsReceivedNote = require('../models/GoodsReceivedNote');
+const DeliveryNote = require('../models/DeliveryNote');
 const ExcelJS = require('exceljs');
+const PDFDocument = require('pdfkit');
+const { stringify } = require('csv-stringify/sync');
 const fs = require('fs');
 const path = require('path');
 const jwt = require('jsonwebtoken');
@@ -37,6 +40,47 @@ const AuditLog = require('../models/AuditLog');
 const AccountingPeriod = require('../models/AccountingPeriod');
 const Notification = require('../models/Notification');
 const SalesOrder = require('../models/SalesOrder');
+
+const MODULE_CATALOG = [
+  { group: 'Command', modules: ['Dashboards', 'Inventory dashboard', 'Sales dashboard', 'Purchase dashboard', 'Finance dashboard'], tools: ['get_dashboard_metrics'] },
+  { group: 'Inventory Core', modules: ['Products', 'Categories', 'Warehouses', 'Stock levels', 'Stock movements', 'Stock transfers', 'Stock audits', 'Batches', 'Serial numbers'], tools: ['get_products', 'get_categories', 'get_warehouses', 'get_stock_summary', 'get_stock_movements', 'get_stock_transfers'] },
+  { group: 'Supply Chain', modules: ['Suppliers', 'Purchase orders', 'Goods received notes', 'Imported items', 'Purchases', 'Purchase returns'], tools: ['get_suppliers', 'get_purchase_orders', 'get_goods_received_notes', 'get_purchases'] },
+  { group: 'Revenue Flow', modules: ['POS', 'Clients', 'Quotations', 'Sales orders', 'Pick packs', 'Invoices', 'Delivery notes', 'Credit notes', 'Recurring invoices', 'Accounts receivable', 'Accounts payable'], tools: ['get_clients', 'get_quotations', 'get_sales_orders', 'get_invoices', 'get_delivery_notes', 'get_credit_notes', 'get_ar_receipts', 'get_ap_payments', 'get_receivables_aging', 'get_sales_summary'] },
+  { group: 'Finance Control', modules: ['Bank accounts', 'Chart of accounts', 'Journal entries', 'Petty cash', 'Fixed assets', 'Liabilities', 'Expenses', 'Budgets', 'Projects', 'Budget settings', 'Employees', 'Payroll', 'Payroll runs', 'Accounting periods'], tools: ['get_bank_accounts', 'get_chart_of_accounts', 'get_journal_entries', 'get_fixed_assets', 'get_loans', 'get_expenses', 'get_budgets', 'get_profit_loss_summary', 'get_balance_sheet', 'get_cash_flow_summary'] },
+  { group: 'Intelligence', modules: ['Reports hub', 'Profit and loss', 'Balance sheet', 'Cash flow', 'Financial ratios', 'Debt maturity schedule'], tools: ['get_profit_loss_summary', 'get_balance_sheet', 'get_cash_flow_summary', 'calculate_financial_ratios', 'forecast_business', 'generate_chart_data'] },
+  { group: 'Control Room', modules: ['User management', 'Roles', 'Security', 'Departments', 'Company settings', 'Notifications', 'Notification settings', 'Backup and restore', 'Bulk data', 'Audit trail', 'Testimonials'], tools: ['get_company_users', 'get_departments', 'get_notifications', 'get_audit_logs', 'get_company_info'] },
+];
+
+const MODULE_RECORD_TOOLS = {
+  products: getProducts,
+  categories: getCategories,
+  warehouses: getWarehouses,
+  stock_movements: getStockMovements,
+  stock_transfers: getStockTransfers,
+  suppliers: getSuppliers,
+  purchase_orders: getPurchaseOrders,
+  purchases: getPurchases,
+  goods_received_notes: getGoodsReceivedNotes,
+  clients: getClients,
+  invoices: getInvoices,
+  quotations: getQuotations,
+  sales_orders: getSalesOrders,
+  delivery_notes: getDeliveryNotes,
+  credit_notes: getCreditNotes,
+  ar_receipts: getARReceipts,
+  ap_payments: getAPPayments,
+  expenses: getExpenses,
+  bank_accounts: getBankAccounts,
+  chart_of_accounts: getChartOfAccounts,
+  journal_entries: getJournalEntries,
+  fixed_assets: getFixedAssets,
+  liabilities: getLoans,
+  budgets: getBudgets,
+  departments: getDepartments,
+  users: getCompanyUsers,
+  notifications: getNotifications,
+  audit_logs: getAuditLogs,
+};
 
 function isValidDate(d) {
   return d instanceof Date && !isNaN(d.getTime());
@@ -796,10 +840,159 @@ async function getCashFlowSummary(companyId, opts = {}) {
   return { bankBalance, cashIn, cashOut, netCashFlow: cashIn - cashOut, period: { startDate, endDate }, currency: 'FRW' };
 }
 
+function getModuleCatalog() {
+  return {
+    count: MODULE_CATALOG.reduce((sum, section) => sum + section.modules.length, 0),
+    sections: MODULE_CATALOG,
+    adaptivePolicy: 'Use get_module_records for supported record lists. For newly added modules, first inspect the catalog and available tools, then explain what Stacy can verify live and what needs a newly exposed API/tool.',
+  };
+}
+
+async function getModuleRecords(companyId, opts = {}) {
+  const moduleKey = String(opts.moduleKey || opts.module || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  if (!moduleKey) return { error: 'moduleKey is required.' };
+  const getter = MODULE_RECORD_TOOLS[moduleKey];
+  if (!getter) {
+    return {
+      error: `Unsupported moduleKey: ${moduleKey}`,
+      supportedModuleKeys: Object.keys(MODULE_RECORD_TOOLS),
+    };
+  }
+  return getter(companyId, opts);
+}
+
+function linearForecast(points, periods = 3) {
+  const clean = points
+    .map((value) => Number(value || 0))
+    .filter((value) => Number.isFinite(value));
+  if (clean.length === 0) return [];
+  if (clean.length === 1) return Array.from({ length: periods }, () => Math.max(0, clean[0]));
+
+  const n = clean.length;
+  const xs = clean.map((_, i) => i + 1);
+  const xMean = xs.reduce((a, b) => a + b, 0) / n;
+  const yMean = clean.reduce((a, b) => a + b, 0) / n;
+  const numerator = xs.reduce((sum, x, i) => sum + ((x - xMean) * (clean[i] - yMean)), 0);
+  const denominator = xs.reduce((sum, x) => sum + ((x - xMean) ** 2), 0) || 1;
+  const slope = numerator / denominator;
+  const intercept = yMean - (slope * xMean);
+  return Array.from({ length: periods }, (_, i) => Math.max(0, Math.round(intercept + (slope * (n + i + 1)))));
+}
+
+function nextMonthLabel(fromDate, offset) {
+  const d = new Date(fromDate.getFullYear(), fromDate.getMonth() + offset, 1);
+  return d.toLocaleString('en', { month: 'short', year: 'numeric' });
+}
+
+async function forecastBusiness(companyId, opts = {}) {
+  const { metric = 'revenue', periods = 3, startDate, endDate } = opts;
+  const dataType = metric === 'inventory' || metric === 'stock' ? 'stock' : metric === 'expenses' ? 'expenses' : 'revenue';
+  const chart = await generateChartData(companyId, {
+    dataType,
+    chartType: 'line',
+    period: 'month',
+    startDate,
+    endDate,
+    limit: 12,
+  });
+
+  const historical = chart.datasets?.[0]?.data || [];
+  const predicted = linearForecast(historical, Math.min(Math.max(Number(periods) || 3, 1), 12));
+  const latest = historical.length ? Number(historical[historical.length - 1] || 0) : 0;
+  const volatility = historical.length > 1
+    ? historical.reduce((sum, value) => sum + Math.abs(Number(value || 0) - latest), 0) / historical.length
+    : latest * 0.15;
+  const confidence = historical.length >= 6 ? 'medium' : historical.length >= 3 ? 'low' : 'low';
+  const now = new Date();
+
+  return {
+    metric,
+    confidence,
+    method: 'linear trend over available monthly history',
+    actual: (chart.labels || []).map((label, index) => ({ period: label, actual: historical[index] })),
+    forecast: predicted.map((value, index) => ({
+      period: nextMonthLabel(now, index + 1),
+      predicted: value,
+      lowerBound: Math.max(0, Math.round(value - volatility)),
+      upperBound: Math.round(value + volatility),
+    })),
+    caveats: [
+      historical.length < 6 ? 'Limited history reduces forecast confidence.' : 'Forecast assumes recent trend continues.',
+      'Forecast is decision support, not a guarantee.',
+    ],
+    currency: dataType === 'stock' ? undefined : 'FRW',
+  };
+}
+
+async function calculateFinancialRatios(companyId) {
+  const [pl, balance, cash, receivables] = await Promise.all([
+    getProfitLossSummary(companyId),
+    getBalanceSheet(companyId),
+    getCashFlowSummary(companyId),
+    getReceivablesAging(companyId),
+  ]);
+  const safeDiv = (a, b) => (Number(b) ? Number(a || 0) / Number(b) : null);
+  return {
+    profitability: {
+      grossMargin: safeDiv(pl.grossProfit, pl.revenue),
+      netMargin: safeDiv(pl.netProfit, pl.revenue),
+    },
+    liquidity: {
+      debtToAssets: safeDiv(balance.totalLiabilities, balance.totalAssets),
+      cashToLiabilities: safeDiv(cash.bankBalance, balance.totalLiabilities),
+    },
+    collections: {
+      receivablesOver90Share: safeDiv(receivables.buckets.over90, receivables.totalOutstanding),
+      totalOutstanding: receivables.totalOutstanding,
+    },
+    source: 'Computed from Stacy live tools.',
+    currency: 'FRW',
+  };
+}
+
+function ensureDownloadsDir() {
+  const downloadsDir = path.join(__dirname, '..', 'downloads');
+  if (!fs.existsSync(downloadsDir)) fs.mkdirSync(downloadsDir, { recursive: true });
+  return downloadsDir;
+}
+
+function buildPublicDownloadUrl(fileNameFull) {
+  let baseUrl = process.env.SERVER_BASE_URL;
+  try {
+    const env = require('../src/config/environment');
+    const cfg = env.getConfig ? env.getConfig() : env;
+    if (!baseUrl) baseUrl = `http://localhost:${(cfg && cfg.server && cfg.server.port) || process.env.PORT || 3000}`;
+  } catch (e) {
+    if (!baseUrl) baseUrl = `http://localhost:${process.env.PORT || 3000}`;
+  }
+  baseUrl = String(baseUrl).replace(/\/$/, '');
+  const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-for-downloads';
+  const token = jwt.sign(
+    { file: fileNameFull, exp: Math.floor(Date.now() / 1000) + (24 * 60 * 60) },
+    JWT_SECRET
+  );
+  return `${baseUrl}/public-download/${token}`;
+}
+
+function cleanupOldDownloads() {
+  try {
+    const downloadsDir = ensureDownloadsDir();
+    const ONE_DAY = 24 * 60 * 60 * 1000;
+    fs.readdirSync(downloadsDir).forEach((f) => {
+      const fp = path.join(downloadsDir, f);
+      if (fs.statSync(fp).mtimeMs < Date.now() - ONE_DAY) fs.unlinkSync(fp);
+    });
+  } catch (_cleanupErr) {
+    /* ignore cleanup errors */
+  }
+}
+
 // Tool definitions for the LLM
 const TOOL_DEFINITIONS = [
   // Company & System
   { type: 'function', function: { name: 'get_company_info', description: 'Get company profile, settings, fiscal year, tax settings, and currency configuration', parameters: { type: 'object', properties: {}, required: [] } } },
+  { type: 'function', function: { name: 'get_module_catalog', description: 'List every major app module Stacy understands, grouped like the sidebar. Use before answering broad questions about system capabilities or newly added modules.', parameters: { type: 'object', properties: {}, required: [] } } },
+  { type: 'function', function: { name: 'get_module_records', description: 'Generic adaptive record fetcher by moduleKey. Use when the user names a module and Stacy needs live records. Supported keys include products, invoices, clients, suppliers, purchase_orders, sales_orders, expenses, budgets, users, audit_logs, and more.', parameters: { type: 'object', properties: { moduleKey: { type: 'string' }, limit: { type: 'integer', default: 20 }, search: { type: 'string' }, status: { type: 'string' }, startDate: { type: 'string' }, endDate: { type: 'string' } }, required: ['moduleKey'] } } },
   // Dashboard
   { type: 'function', function: { name: 'get_dashboard_metrics', description: 'High-level business dashboard: KPIs, recent activity, top products, alerts, and quick stats', parameters: { type: 'object', properties: {} } } },
   // Inventory
@@ -837,9 +1030,12 @@ const TOOL_DEFINITIONS = [
   { type: 'function', function: { name: 'get_profit_loss_summary', description: 'Compute Profit & Loss statement: revenue, COGS, gross profit, operating expenses, tax, net profit', parameters: { type: 'object', properties: { startDate: { type: 'string' }, endDate: { type: 'string' } } } } },
   { type: 'function', function: { name: 'get_balance_sheet', description: 'Compute Balance Sheet: total assets, liabilities, and equity', parameters: { type: 'object', properties: { asOfDate: { type: 'string' } } } } },
   { type: 'function', function: { name: 'get_cash_flow_summary', description: 'Cash flow summary: bank balance, cash in, cash out, net cash flow', parameters: { type: 'object', properties: { startDate: { type: 'string' }, endDate: { type: 'string' } } } } },
+  { type: 'function', function: { name: 'calculate_financial_ratios', description: 'Calculate profitability, liquidity, debt, and collection ratios from live company data. Use for ratio analysis and financial interpretation.', parameters: { type: 'object', properties: {} } } },
+  { type: 'function', function: { name: 'forecast_business', description: 'Create a deterministic forecast from historical live data. Use for revenue, sales, expense, cash-flow, or inventory predictions before giving recommendations.', parameters: { type: 'object', properties: { metric: { type: 'string', enum: ['revenue', 'sales', 'expenses', 'cash-flow', 'inventory', 'stock'], default: 'revenue' }, periods: { type: 'integer', default: 3 }, startDate: { type: 'string' }, endDate: { type: 'string' } } } } },
   { type: 'function', function: { name: 'generate_chart_data', description: 'Prepare chart data for rendering. Use when user asks for charts, trends, or visualizations. Supports line, bar, pie, doughnut charts.', parameters: { type: 'object', properties: { chartType: { type: 'string', enum: ['line', 'bar', 'pie', 'doughnut'], default: 'line' }, dataType: { type: 'string', enum: ['revenue', 'expenses', 'stock', 'product_revenue'], default: 'revenue' }, period: { type: 'string', enum: ['day', 'week', 'month', 'quarter', 'year'], default: 'month' }, startDate: { type: 'string' }, endDate: { type: 'string' }, limit: { type: 'integer', default: 12 } }, required: ['dataType'] } } },
   // Export
   { type: 'function', function: { name: 'generate_excel', description: 'Generate an Excel file from tabular data and return a download link. Use when the user asks to export, download, or save data as Excel/CSV. The data parameter must be an array of objects (rows) with keys as column headers. The sheetName should describe the data (e.g. "Sales Report", "Stock Levels").', parameters: { type: 'object', properties: { title: { type: 'string', description: 'Workbook title / header row text' }, sheetName: { type: 'string', description: 'Sheet tab name (max 31 chars)' }, data: { type: 'array', items: { type: 'object' }, description: 'Array of objects, each object is a row with keys as column headers' }, fileName: { type: 'string', description: 'Optional custom filename without extension' } }, required: ['title', 'sheetName', 'data'] } } },
+  { type: 'function', function: { name: 'export_data', description: 'Generate Excel, CSV, or PDF files from analyzed tabular data and return a signed download link. Prefer this for user-requested file exports. Always provide analysis before the link.', parameters: { type: 'object', properties: { format: { type: 'string', enum: ['excel', 'csv', 'pdf'], default: 'excel' }, title: { type: 'string' }, sheetName: { type: 'string' }, data: { type: 'array', items: { type: 'object' } }, analysis: { type: 'string' }, fileName: { type: 'string' } }, required: ['format', 'title', 'data'] } } },
   // System & Admin
   { type: 'function', function: { name: 'get_departments', description: 'List company departments and managers', parameters: { type: 'object', properties: { limit: { type: 'integer', default: 50 }, search: { type: 'string' } } } } },
   { type: 'function', function: { name: 'get_company_users', description: 'List system users, roles, and status', parameters: { type: 'object', properties: { role: { type: 'string' }, limit: { type: 'integer', default: 50 } } } } },
@@ -894,13 +1090,7 @@ async function generateExcel(args) {
       col.width = Math.min(maxLength, 60);
     });
 
-    // Save file
-    const downloadsDir = path.join(__dirname, '..', 'downloads');
-    console.log('[generateExcel] downloadsDir:', downloadsDir, 'exists:', fs.existsSync(downloadsDir));
-    if (!fs.existsSync(downloadsDir)) {
-      fs.mkdirSync(downloadsDir, { recursive: true });
-      console.log('[generateExcel] Created downloadsDir');
-    }
+    const downloadsDir = ensureDownloadsDir();
 
     const timestamp = Date.now();
     const safeFileName = fileName ? fileName.replace(/[^a-zA-Z0-9_-]/g, '_') : `stacy-export-${timestamp}`;
@@ -912,51 +1102,8 @@ async function generateExcel(args) {
     const stats = fs.statSync(filePath);
     console.log(`[generateExcel] File created: ${filePath}, Size: ${stats.size} bytes`);
 
-    // Clean up files older than 24 hours (background)
-    try {
-      const ONE_DAY = 24 * 60 * 60 * 1000;
-      fs.readdirSync(downloadsDir).forEach((f) => {
-        const fp = path.join(downloadsDir, f);
-        if (fs.statSync(fp).mtimeMs < Date.now() - ONE_DAY) fs.unlinkSync(fp);
-      });
-    } catch (_cleanupErr) {
-      /* ignore cleanup errors */
-    }
-
-    // Build absolute download URL. Prefer explicit SERVER_BASE_URL env var,
-    // otherwise fall back to backend host:port from central config.
-    let baseUrl = process.env.SERVER_BASE_URL;
-    try {
-      const env = require('../src/config/environment');
-      const cfg = env.getConfig ? env.getConfig() : env;
-      if (!baseUrl) baseUrl = `http://localhost:${(cfg && cfg.server && cfg.server.port) || process.env.PORT || 3000}`;
-    } catch (e) {
-      if (!baseUrl) baseUrl = `http://localhost:${process.env.PORT || 3000}`;
-    }
-
-    // Ensure no trailing slash
-    baseUrl = String(baseUrl).replace(/\/$/, '');
-
-    // Create a short-lived signed token for public download
-    try {
-      const jwt = require('jsonwebtoken');
-      const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-for-downloads';
-      const token = jwt.sign(
-        { file: fileNameFull, exp: Math.floor(Date.now() / 1000) + (24 * 60 * 60) },
-        JWT_SECRET
-      );
-      publicDownloadUrl = `${baseUrl}/public-download/${token}`;
-      console.log('[generateExcel] Generated public download URL with token');
-    } catch (jwtErr) {
-      console.error('[generateExcel] JWT signing failed:', jwtErr.message);
-      publicDownloadUrl = null;
-    }
-
-    // Use public download URL with signed token (no auth required)
-    // If JWT signing failed, we don't have a working download URL
-    const finalDownloadUrl = publicDownloadUrl;
-
-    console.log('[generateExcel] Returning downloadUrl:', publicDownloadUrl);
+    cleanupOldDownloads();
+    const publicDownloadUrl = buildPublicDownloadUrl(fileNameFull);
 
     return {
       downloadUrl: publicDownloadUrl,
@@ -970,11 +1117,116 @@ async function generateExcel(args) {
   }
 }
 
+async function generateCsv(args) {
+  const { data, fileName } = args || {};
+  if (!Array.isArray(data) || data.length === 0) {
+    return { error: 'No data provided. Pass an array of objects as the "data" parameter.' };
+  }
+  try {
+    const downloadsDir = ensureDownloadsDir();
+    const safeFileName = fileName ? fileName.replace(/[^a-zA-Z0-9_-]/g, '_') : `stacy-export-${Date.now()}`;
+    const fileNameFull = `${safeFileName}.csv`;
+    const filePath = path.join(downloadsDir, fileNameFull);
+    const csv = stringify(data, { header: true });
+    fs.writeFileSync(filePath, `\uFEFF${csv}`, 'utf8');
+    const stats = fs.statSync(filePath);
+    cleanupOldDownloads();
+    return {
+      downloadUrl: buildPublicDownloadUrl(fileNameFull),
+      fileName: fileNameFull,
+      rows: data.length,
+      columns: Object.keys(data[0]).length,
+      fileSize: stats.size,
+    };
+  } catch (err) {
+    return { error: `Failed to generate CSV: ${err.message || 'Unknown error'}` };
+  }
+}
+
+async function generatePdf(args) {
+  const { title = 'Stacy Report', data, fileName, analysis = '' } = args || {};
+  if (!Array.isArray(data) || data.length === 0) {
+    return { error: 'No data provided. Pass an array of objects as the "data" parameter.' };
+  }
+
+  try {
+    const downloadsDir = ensureDownloadsDir();
+    const safeFileName = fileName ? fileName.replace(/[^a-zA-Z0-9_-]/g, '_') : `stacy-report-${Date.now()}`;
+    const fileNameFull = `${safeFileName}.pdf`;
+    const filePath = path.join(downloadsDir, fileNameFull);
+    const doc = new PDFDocument({ margin: 36, size: 'A4' });
+    const stream = fs.createWriteStream(filePath);
+    doc.pipe(stream);
+
+    doc.fontSize(16).font('Helvetica-Bold').text(title, { align: 'center' });
+    doc.moveDown(0.4);
+    doc.fontSize(8).font('Helvetica').text(`Generated by Stacy on ${new Date().toLocaleString()}`, { align: 'center' });
+    doc.moveDown();
+
+    if (analysis) {
+      doc.fontSize(10).font('Helvetica-Bold').text('Analysis');
+      doc.fontSize(9).font('Helvetica').text(String(analysis).slice(0, 1800), { lineGap: 2 });
+      doc.moveDown();
+    }
+
+    const headers = Object.keys(data[0]).slice(0, 6);
+    const pageWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+    const colWidth = pageWidth / Math.max(headers.length, 1);
+    const drawRow = (values, isHeader = false) => {
+      const startY = doc.y;
+      if (startY > doc.page.height - 70) doc.addPage();
+      values.forEach((value, index) => {
+        doc
+          .fontSize(isHeader ? 8 : 7)
+          .font(isHeader ? 'Helvetica-Bold' : 'Helvetica')
+          .text(String(value ?? '').slice(0, 80), doc.page.margins.left + (index * colWidth), doc.y, {
+            width: colWidth - 4,
+            lineBreak: false,
+          });
+      });
+      doc.y = startY + (isHeader ? 18 : 16);
+    };
+
+    drawRow(headers, true);
+    data.slice(0, 200).forEach((row) => drawRow(headers.map((h) => row[h])));
+    if (data.length > 200) {
+      doc.moveDown();
+      doc.fontSize(8).font('Helvetica-Oblique').text(`Showing first 200 of ${data.length} rows.`);
+    }
+
+    doc.end();
+    await new Promise((resolve, reject) => {
+      stream.on('finish', resolve);
+      stream.on('error', reject);
+    });
+    const stats = fs.statSync(filePath);
+    cleanupOldDownloads();
+    return {
+      downloadUrl: buildPublicDownloadUrl(fileNameFull),
+      fileName: fileNameFull,
+      rows: data.length,
+      columns: headers.length,
+      fileSize: stats.size,
+    };
+  } catch (err) {
+    return { error: `Failed to generate PDF: ${err.message || 'Unknown error'}` };
+  }
+}
+
+async function exportData(args) {
+  const format = String(args?.format || args?.fileFormat || 'excel').toLowerCase();
+  if (format === 'csv') return generateCsv(args);
+  if (format === 'pdf') return generatePdf(args);
+  return generateExcel(args);
+}
+
 // Execute a tool by name
 async function executeTool(companyId, toolName, args = {}) {
   switch (toolName) {
     // Company & System
     case 'get_company_info': return getCompanyInfo(companyId);
+    case 'get_module_catalog': return getModuleCatalog();
+    case 'get_module_records': return getModuleRecords(companyId, args);
     case 'get_dashboard_metrics': return getDashboardMetrics(companyId);
     // Inventory
     case 'get_products': return getProducts(companyId, args);
@@ -1011,8 +1263,11 @@ async function executeTool(companyId, toolName, args = {}) {
     case 'get_profit_loss_summary': return getProfitLossSummary(companyId, args);
     case 'get_balance_sheet': return getBalanceSheet(companyId, args);
     case 'get_cash_flow_summary': return getCashFlowSummary(companyId, args);
+    case 'calculate_financial_ratios': return calculateFinancialRatios(companyId, args);
+    case 'forecast_business': return forecastBusiness(companyId, args);
     case 'generate_chart_data': return generateChartData(companyId, args);
     case 'generate_excel': return generateExcel(args);
+    case 'export_data': return exportData(args);
     // System & Admin
     case 'get_departments': return getDepartments(companyId, args);
     case 'get_company_users': return getCompanyUsers(companyId, args);
@@ -1028,6 +1283,10 @@ module.exports = {
   getDashboardMetrics,
   generateChartData,
   getProfitLossSummary,
+  getModuleCatalog,
+  getModuleRecords,
+  forecastBusiness,
+  calculateFinancialRatios,
   getCategories,
   getWarehouses,
   getStockMovements,
@@ -1051,4 +1310,7 @@ module.exports = {
   getBalanceSheet,
   getCashFlowSummary,
   generateExcel,
+  generateCsv,
+  generatePdf,
+  exportData,
 };
