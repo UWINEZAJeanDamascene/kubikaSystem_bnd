@@ -20,10 +20,45 @@ const ExcelFormatter = require('../src/exports/formatters/ExcelFormatter');
 // Helper to format RWF
 const formatRWF = (amount) => {
   if (amount === null || amount === undefined) return '-';
-  return 'RWF ' + Math.abs(amount).toLocaleString('en-RW', {
+  const numeric = Number(amount) || 0;
+  const sign = numeric < 0 ? '-' : '';
+  return sign + 'RWF ' + Math.abs(numeric).toLocaleString('en-RW', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2
   });
+};
+
+const getCompanyTin = (company) =>
+  company?.tax_identification_number || company?.registration_number || company?.tin || 'N/A';
+
+const formatLocalDate = (date = new Date()) => {
+  const d = new Date(date);
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const loadCompany = async (companyId) => {
+  const Company = require('../models/Company');
+  return Company.findById(companyId);
+};
+
+const renderPdf = async (res, filename, companyId, title, period, sections) => {
+  const company = await loadCompany(companyId);
+  const doc = new PDFDocument({ margin: 30 });
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  doc.pipe(res);
+  pdfRenderer.renderReportHeader(doc, {
+    companyName: company?.name || 'Company',
+    companyTin: getCompanyTin(company),
+    reportTitle: title,
+    period
+  });
+  sections(doc);
+  pdfRenderer.renderFooter(doc, 1, 1);
+  doc.end();
 };
 
 // Apply authentication and company context to all routes
@@ -73,7 +108,7 @@ router.get('/sales-performance/pdf', authorize('reports', 'read'), async (req, r
     // Header
     pdfRenderer.renderReportHeader(doc, {
       companyName: company?.name || 'Company',
-      companyTin: company?.tin || 'N/A',
+      companyTin: getCompanyTin(company),
       reportTitle: 'Weekly Sales Performance',
       period: `${data.weekStart} to ${data.weekEnd}`
     });
@@ -133,12 +168,12 @@ router.get('/inventory-reorder/pdf', authorize('reports', 'read'), async (req, r
     
     const doc = new PDFDocument();
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="weekly-inventory-reorder-${new Date().toISOString().split('T')[0]}.pdf"`);
+    res.setHeader('Content-Disposition', `attachment; filename="weekly-inventory-reorder-${formatLocalDate()}.pdf"`);
     doc.pipe(res);
     
     pdfRenderer.renderReportHeader(doc, {
       companyName: company?.name || 'Company',
-      companyTin: company?.tin || 'N/A',
+      companyTin: getCompanyTin(company),
       reportTitle: 'Weekly Inventory Reorder Report',
       period: 'Current Week'
     });
@@ -260,6 +295,165 @@ router.get('/payroll-preview', authorize('reports', 'read'), async (req, res) =>
 });
 
 // ============================================
+// PDF EXPORTS
+// ============================================
+
+router.get('/supplier-performance/pdf', authorize('reports', 'read'), async (req, res) => {
+  try {
+    let { weekStart } = req.query;
+    if (!weekStart) weekStart = WeeklyReportsService.getDefaultWeek();
+    const data = await WeeklyReportsService.getWeeklySupplierPerformance(req.companyId, weekStart);
+    await renderPdf(res, `weekly-supplier-${weekStart}.pdf`, req.companyId, 'Weekly Supplier Performance', `${data.weekStart} to ${data.weekEnd}`, (doc) => {
+      pdfRenderer.renderSummarySection(doc, [
+        { label: 'Suppliers With Activity', value: data.summary.totalSuppliers },
+        { label: 'POs Raised', value: data.summary.totalPosRaised },
+        { label: 'Deliveries Received', value: data.summary.totalDeliveries },
+        { label: 'Pending Orders', value: data.summary.totalPending },
+        { label: 'Overdue Deliveries', value: data.summary.totalOverdue }
+      ]);
+      if (data.suppliers.length > 0) {
+        pdfRenderer.renderDivider(doc);
+        pdfRenderer.renderDataTable(doc, {
+          headers: ['Supplier', 'POs', 'PO Value', 'Deliveries', 'Pending', 'Overdue'],
+          columnWidths: [180, 50, 90, 70, 70, 70],
+          data: data.suppliers,
+          dataMapper: (item) => [item.supplierName, item.posRaised.count, item.posRaised.value, item.deliveriesReceived.count, item.pendingOrders.count, item.overdueDeliveries.count],
+          alignments: ['left', 'right', 'right', 'right', 'right', 'right'],
+          formats: [null, null, pdfRenderer.FORMATTERS.currency, null, null, null]
+        });
+      }
+    });
+  } catch (error) {
+    console.error('Weekly Supplier Performance PDF error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.get('/receivables-aging/pdf', authorize('reports', 'read'), async (req, res) => {
+  try {
+    const data = await WeeklyReportsService.getWeeklyReceivablesAging(req.companyId);
+    await renderPdf(res, `weekly-receivables-aging-${formatLocalDate()}.pdf`, req.companyId, 'Weekly Receivables Aging', 'Current outstanding receivables', (doc) => {
+      pdfRenderer.renderSummarySection(doc, [
+        { label: 'Total Outstanding', value: data.summary.totalOutstanding },
+        { label: 'Total Invoices', value: data.summary.totalInvoices },
+        { label: '0-7 Days', value: data.summary.bucketTotals['0-7'] },
+        { label: '8-14 Days', value: data.summary.bucketTotals['8-14'] },
+        { label: '15-21 Days', value: data.summary.bucketTotals['15-21'] },
+        { label: 'Over 21 Days', value: data.summary.bucketTotals.over21 }
+      ]);
+      const rows = Object.values(data.buckets).flatMap(bucket => bucket.invoices.map(invoice => ({ ...invoice, bucket: bucket.label })));
+      if (rows.length > 0) {
+        pdfRenderer.renderDivider(doc);
+        pdfRenderer.renderDataTable(doc, {
+          headers: ['Bucket', 'Invoice', 'Customer', 'Due', 'Balance'],
+          columnWidths: [80, 100, 170, 90, 90],
+          data: rows,
+          dataMapper: (item) => [item.bucket, item.invoiceNumber, item.clientName, formatLocalDate(item.dueDate), item.balance],
+          alignments: ['left', 'left', 'left', 'left', 'right'],
+          formats: [null, null, null, null, pdfRenderer.FORMATTERS.currency]
+        });
+      }
+    });
+  } catch (error) {
+    console.error('Weekly Receivables Aging PDF error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.get('/payables-aging/pdf', authorize('reports', 'read'), async (req, res) => {
+  try {
+    const data = await WeeklyReportsService.getWeeklyPayablesAging(req.companyId);
+    await renderPdf(res, `weekly-payables-aging-${formatLocalDate()}.pdf`, req.companyId, 'Weekly Payables Aging', 'Current outstanding payables', (doc) => {
+      pdfRenderer.renderSummarySection(doc, [
+        { label: 'Total Payable', value: data.summary.totalPayable },
+        { label: 'Total Bills', value: data.summary.totalPurchases },
+        { label: '0-7 Days', value: data.summary.bucketTotals['0-7'] },
+        { label: '8-14 Days', value: data.summary.bucketTotals['8-14'] },
+        { label: '15-21 Days', value: data.summary.bucketTotals['15-21'] },
+        { label: 'Over 21 Days', value: data.summary.bucketTotals.over21 }
+      ]);
+      const rows = Object.values(data.buckets).flatMap(bucket => bucket.purchases.map(purchase => ({ ...purchase, bucket: bucket.label })));
+      if (rows.length > 0) {
+        pdfRenderer.renderDivider(doc);
+        pdfRenderer.renderDataTable(doc, {
+          headers: ['Bucket', 'Bill', 'Supplier', 'Due', 'Balance'],
+          columnWidths: [80, 100, 170, 90, 90],
+          data: rows,
+          dataMapper: (item) => [item.bucket, item.purchaseNumber, item.supplierName, formatLocalDate(item.dueDate), item.balance],
+          alignments: ['left', 'left', 'left', 'left', 'right'],
+          formats: [null, null, null, null, pdfRenderer.FORMATTERS.currency]
+        });
+      }
+    });
+  } catch (error) {
+    console.error('Weekly Payables Aging PDF error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.get('/cash-flow/pdf', authorize('reports', 'read'), async (req, res) => {
+  try {
+    let { weekStart } = req.query;
+    if (!weekStart) weekStart = WeeklyReportsService.getDefaultWeek();
+    const data = await WeeklyReportsService.getWeeklyCashFlow(req.companyId, weekStart);
+    await renderPdf(res, `weekly-cashflow-${weekStart}.pdf`, req.companyId, 'Weekly Cash Flow', `${data.weekStart} to ${data.weekEnd}`, (doc) => {
+      pdfRenderer.renderSummarySection(doc, [
+        { label: 'Week Total In', value: data.summary.weekTotalIn },
+        { label: 'Week Total Out', value: data.summary.weekTotalOut },
+        { label: 'Net Flow', value: data.summary.weekNetFlow }
+      ]);
+      pdfRenderer.renderDivider(doc);
+      pdfRenderer.renderDataTable(doc, {
+        headers: ['Day', 'Date', 'Cash In', 'Cash Out', 'Net Flow'],
+        columnWidths: [80, 100, 110, 110, 110],
+        data: data.summary.dailyFlow,
+        dataMapper: (item) => [item.dayName, item.date, item.cashIn, item.cashOut, item.netFlow],
+        alignments: ['left', 'left', 'right', 'right', 'right'],
+        formats: [null, null, pdfRenderer.FORMATTERS.currency, pdfRenderer.FORMATTERS.currency, pdfRenderer.FORMATTERS.currency]
+      });
+    });
+  } catch (error) {
+    console.error('Weekly Cash Flow PDF error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.get('/payroll-preview/pdf', authorize('reports', 'read'), async (req, res) => {
+  try {
+    const data = await WeeklyReportsService.getWeeklyPayrollPreview(req.companyId);
+    await renderPdf(res, `weekly-payroll-${formatLocalDate()}.pdf`, req.companyId, 'Weekly Payroll Preview', data.payrollInProgress ? `${data.periodStart} to ${data.periodEnd}` : 'No payroll in progress', (doc) => {
+      if (!data.payrollInProgress) {
+        doc.fontSize(11).text(data.message || 'No payroll in progress');
+        return;
+      }
+      pdfRenderer.renderSummarySection(doc, [
+        { label: 'Employee Count', value: data.summary.employeeCount },
+        { label: 'Gross Pay', value: data.summary.grossPay },
+        { label: 'PAYE', value: data.summary.paye },
+        { label: 'RSSB Employee', value: data.summary.rssbEmployee },
+        { label: 'RSSB Employer', value: data.summary.rssbEmployer },
+        { label: 'Total Deductions', value: data.summary.totalDeductions },
+        { label: 'Net Pay', value: data.summary.netPay }
+      ]);
+      if (data.employees?.length) {
+        pdfRenderer.renderDivider(doc);
+        pdfRenderer.renderDataTable(doc, {
+          headers: ['Employee', 'Department', 'Gross', 'Deductions', 'Net'],
+          columnWidths: [150, 120, 90, 90, 90],
+          data: data.employees,
+          dataMapper: (item) => [item.name, item.department, item.grossPay, item.totalDeductions, item.netPay],
+          alignments: ['left', 'left', 'right', 'right', 'right'],
+          formats: [null, null, pdfRenderer.FORMATTERS.currency, pdfRenderer.FORMATTERS.currency, pdfRenderer.FORMATTERS.currency]
+        });
+      }
+    });
+  } catch (error) {
+    console.error('Weekly Payroll Preview PDF error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ============================================
 // EXCEL EXPORTS
 // ============================================
 
@@ -366,7 +560,7 @@ router.get('/inventory-reorder/excel', authorize('reports', 'read'), async (req,
       }
     });
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename="weekly-inventory-reorder-${new Date().toISOString().split('T')[0]}.xlsx"`);
+    res.setHeader('Content-Disposition', `attachment; filename="weekly-inventory-reorder-${formatLocalDate()}.xlsx"`);
     res.send(buffer);
   } catch (error) {
     console.error('Weekly Inventory Reorder Excel error:', error);
@@ -492,7 +686,7 @@ router.get('/receivables-aging/excel', authorize('reports', 'read'), async (req,
       }
     });
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename="weekly-receivables-aging-${new Date().toISOString().split('T')[0]}.xlsx"`);
+    res.setHeader('Content-Disposition', `attachment; filename="weekly-receivables-aging-${formatLocalDate()}.xlsx"`);
     res.send(buffer);
   } catch (error) {
     console.error('Weekly Receivables Aging Excel error:', error);
@@ -572,7 +766,7 @@ router.get('/payables-aging/excel', authorize('reports', 'read'), async (req, re
       }
     });
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename="weekly-payables-aging-${new Date().toISOString().split('T')[0]}.xlsx"`);
+    res.setHeader('Content-Disposition', `attachment; filename="weekly-payables-aging-${formatLocalDate()}.xlsx"`);
     res.send(buffer);
   } catch (error) {
     console.error('Weekly Payables Aging Excel error:', error);
@@ -670,7 +864,7 @@ router.get('/payroll-preview/excel', authorize('reports', 'read'), async (req, r
       }
     });
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename="weekly-payroll-${new Date().toISOString().split('T')[0]}.xlsx"`);
+    res.setHeader('Content-Disposition', `attachment; filename="weekly-payroll-${formatLocalDate()}.xlsx"`);
     res.send(buffer);
   } catch (error) {
     console.error('Weekly Payroll Preview Excel error:', error);

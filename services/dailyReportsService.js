@@ -34,21 +34,6 @@ const toNumber = (value) => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
-// Format currency in Rwandan Francs
-const formatRWF = (amount) => {
-  if (amount === null || amount === undefined) return '-';
-  return 'RWF ' + Math.abs(amount).toLocaleString('en-RW', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-  });
-};
-
-// Format number with thousands separator
-const formatNumber = (num) => {
-  if (num === null || num === undefined) return '-';
-  return num.toLocaleString('en-RW');
-};
-
 // Get date range for a specific day
 const getDateRange = (dateStr) => {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dateStr || ''))) {
@@ -75,7 +60,6 @@ class DailyReportsService {
     const { start, end } = getDateRange(dateStr);
     
     const Invoice = mongoose.model('Invoice');
-    const SalesOrder = mongoose.model('SalesOrder');
     
     // Aggregate sales data
     const salesData = await Invoice.aggregate([
@@ -109,22 +93,23 @@ class DailyReportsService {
       }
     ]);
 
-    // Get top 5 selling products
-    const topProducts = await SalesOrder.aggregate([
+    // Get top 5 selling products from the same confirmed invoices used by the report totals.
+    const topProducts = await Invoice.aggregate([
       {
         $match: {
           company: toObjectId(companyId),
-          orderDate: { $gte: new Date(start), $lte: new Date(end) },
-          status: { $in: ['delivered', 'invoiced', 'closed'] }
+          invoiceDate: { $gte: new Date(start), $lte: new Date(end) },
+          status: { $in: ['fully_paid', 'partially_paid', 'confirmed'] }
         }
       },
-      { $unwind: '$items' },
+      { $unwind: '$lines' },
       {
         $group: {
-          _id: '$items.product',
-          productName: { $first: '$items.name' },
-          totalQuantity: { $sum: { $toDouble: '$items.qty' } },
-          totalRevenue: { $sum: { $multiply: [{ $toDouble: '$items.qty' }, { $toDouble: '$items.unitPrice' }] } }
+          _id: '$lines.product',
+          productName: { $first: { $ifNull: ['$lines.productName', '$lines.description'] } },
+          productCode: { $first: '$lines.productCode' },
+          totalQuantity: { $sum: { $toDouble: { $ifNull: ['$lines.qty', 0] } } },
+          totalRevenue: { $sum: { $toDouble: { $ifNull: ['$lines.lineTotal', 0] } } }
         }
       },
       { $sort: { totalQuantity: -1 } },
@@ -168,7 +153,7 @@ class DailyReportsService {
       },
       topProducts: topProducts.map(p => ({
         productId: p._id,
-        name: p.productName || p.product?.name || 'Unknown',
+        name: p.productName || p.product?.name || p.productCode || 'Unknown',
         quantity: p.totalQuantity,
         revenue: p.totalRevenue
       })),
@@ -224,7 +209,17 @@ class DailyReportsService {
             _id: null,
             totalGRNs: { $sum: 1 },
             totalGRNAmount: { $sum: { $toDouble: '$totalAmount' } },
-            totalItemsReceived: { $sum: { $size: { $ifNull: ['$lines', []] } } }
+            totalItemsReceived: {
+              $sum: {
+                $sum: {
+                  $map: {
+                    input: { $ifNull: ['$lines', []] },
+                    as: 'line',
+                    in: { $toDouble: { $ifNull: ['$$line.qtyReceived', 0] } }
+                  }
+                }
+              }
+            }
           }
         }
       ])
@@ -851,26 +846,83 @@ class DailyReportsService {
     const { start, end } = getDateRange(dateStr);
     
     const Invoice = mongoose.model('Invoice');
-    const JournalEntry = mongoose.model('JournalEntry');
+    const CreditNote = mongoose.model('CreditNote');
+    const Purchase = mongoose.model('Purchase');
+    const Expense = mongoose.model('Expense');
     
     // Get tax data from invoices - use taxAmount (actual field), not taxTotal (alias)
-    const invoiceTax = await Invoice.aggregate([
-      {
-        $match: {
-          company: toObjectId(companyId),
-          invoiceDate: { $gte: new Date(start), $lte: new Date(end) },
-          status: { $in: ['fully_paid', 'partially_paid', 'confirmed'] }
+    const [invoiceTax, creditNoteTax, invoiceWHT, purchaseWHT, expenseWHT] = await Promise.all([
+      Invoice.aggregate([
+        {
+          $match: {
+            company: toObjectId(companyId),
+            invoiceDate: { $gte: new Date(start), $lte: new Date(end) },
+            status: { $in: ['fully_paid', 'partially_paid', 'confirmed'] }
+          }
+        },
+        {
+          $group: {
+            _id: null,
+            totalTax: { $sum: { $toDouble: { $ifNull: ['$taxAmount', 0] } } },
+            subtotal: { $sum: { $toDouble: { $ifNull: ['$subtotal', 0] } } },
+            totalDiscount: { $sum: { $toDouble: { $ifNull: ['$totalDiscount', '$discount'] } } },
+            total: { $sum: { $toDouble: { $ifNull: ['$totalAmount', '$total'] } } },
+            invoiceCount: { $sum: 1 }
+          }
         }
-      },
-      {
-        $group: {
-          _id: null,
-          totalTax: { $sum: { $toDouble: { $ifNull: ['$taxAmount', 0] } } },
-          subtotal: { $sum: { $toDouble: { $ifNull: ['$subtotal', 0] } } },
-          totalDiscount: { $sum: { $toDouble: { $ifNull: ['$totalDiscount', '$discount'] } } },
-          total: { $sum: { $toDouble: { $ifNull: ['$totalAmount', '$total'] } } }
+      ]),
+      CreditNote.aggregate([
+        {
+          $match: {
+            company: toObjectId(companyId),
+            creditDate: { $gte: new Date(start), $lte: new Date(end) },
+            status: { $in: ['confirmed', 'issued', 'applied', 'partially_refunded', 'refunded'] }
+          }
+        },
+        {
+          $group: {
+            _id: null,
+            totalTax: { $sum: { $toDouble: { $ifNull: ['$taxAmount', 0] } } },
+            total: { $sum: { $toDouble: { $ifNull: ['$totalAmount', 0] } } },
+            noteCount: { $sum: 1 }
+          }
         }
-      }
+      ]),
+      Invoice.aggregate([
+        {
+          $match: {
+            company: toObjectId(companyId),
+            invoiceDate: { $gte: new Date(start), $lte: new Date(end) },
+            status: { $in: ['fully_paid', 'partially_paid', 'confirmed'] },
+            withholdingTax: { $exists: true, $gt: 0 }
+          }
+        },
+        { $group: { _id: null, total: { $sum: { $toDouble: '$withholdingTax' } }, count: { $sum: 1 } } }
+      ]),
+      Purchase.aggregate([
+        {
+          $match: {
+            company: toObjectId(companyId),
+            purchaseDate: { $gte: new Date(start), $lte: new Date(end) },
+            status: { $in: ['received', 'partial', 'paid'] },
+            withholdingTax: { $exists: true, $gt: 0 }
+          }
+        },
+        { $group: { _id: null, total: { $sum: { $toDouble: '$withholdingTax' } }, count: { $sum: 1 } } }
+      ]),
+      Expense.aggregate([
+        {
+          $match: {
+            company: toObjectId(companyId),
+            $or: [
+              { expense_date: { $gte: new Date(start), $lte: new Date(end) } },
+              { date: { $gte: new Date(start), $lte: new Date(end) } }
+            ],
+            withholdingTax: { $exists: true, $gt: 0 }
+          }
+        },
+        { $group: { _id: null, total: { $sum: { $toDouble: '$withholdingTax' } }, count: { $sum: 1 } } }
+      ])
     ]);
     
     // Get tax breakdown by tax code from invoice lines
@@ -914,18 +966,29 @@ class DailyReportsService {
       { $sort: { taxRate: 1 } }
     ]);
     
-    const taxData = invoiceTax[0] || { totalTax: 0, subtotal: 0, totalDiscount: 0, total: 0 };
+    const taxData = invoiceTax[0] || { totalTax: 0, subtotal: 0, totalDiscount: 0, total: 0, invoiceCount: 0 };
+    const reversalData = creditNoteTax[0] || { totalTax: 0, total: 0, noteCount: 0 };
     const taxableSales = Math.max(0, toNumber(taxData.subtotal) - toNumber(taxData.totalDiscount));
+    const totalOutputVAT = Math.max(0, toNumber(taxData.totalTax) - toNumber(reversalData.totalTax));
+    const withholdingTaxCollected = toNumber(invoiceWHT[0]?.total);
+    const withholdingTaxPaid = toNumber(purchaseWHT[0]?.total) + toNumber(expenseWHT[0]?.total);
     
     return {
       reportName: 'Daily Tax Collected',
       date: dateStr,
       companyId,
       summary: {
-        totalOutputVAT: toNumber(taxData.totalTax),
+        totalOutputVAT,
+        grossOutputVAT: toNumber(taxData.totalTax),
+        outputVATReversed: toNumber(reversalData.totalTax),
         taxableSales,
         totalSales: toNumber(taxData.total),
-        exemptSales: Math.max(0, toNumber(taxData.total) - taxableSales - toNumber(taxData.totalTax))
+        exemptSales: Math.max(0, toNumber(taxData.total) - taxableSales - toNumber(taxData.totalTax)),
+        withholdingTaxCollected,
+        withholdingTaxPaid,
+        netWithholdingTax: withholdingTaxCollected - withholdingTaxPaid,
+        invoiceCount: toNumber(taxData.invoiceCount),
+        creditNoteCount: toNumber(reversalData.noteCount)
       },
       taxBreakdown: taxBreakdown.map(t => ({
         taxCode: t.taxCode || 'EXEMPT',
@@ -933,6 +996,11 @@ class DailyReportsService {
         taxableAmount: toNumber(t.taxableAmount),
         taxAmount: toNumber(t.taxAmount)
       })),
+      withholdingBreakdown: [
+        { taxType: 'Sales WHT Collected', source: 'Invoices', count: toNumber(invoiceWHT[0]?.count), amount: withholdingTaxCollected },
+        { taxType: 'Purchase WHT Withheld', source: 'Purchases', count: toNumber(purchaseWHT[0]?.count), amount: toNumber(purchaseWHT[0]?.total) },
+        { taxType: 'Expense WHT Withheld', source: 'Expenses', count: toNumber(expenseWHT[0]?.count), amount: toNumber(expenseWHT[0]?.total) }
+      ].filter(item => item.amount > 0 || item.count > 0),
       generatedAt: new Date().toISOString()
     };
   }

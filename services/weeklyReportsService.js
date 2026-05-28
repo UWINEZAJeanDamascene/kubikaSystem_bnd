@@ -14,6 +14,32 @@ const ARReceipt = require('../models/ARReceipt');
 const APPayment = require('../models/APPayment');
 const JournalEntry = require('../models/JournalEntry');
 const ChartOfAccount = require('../models/ChartOfAccount');
+require('../models/BankAccount');
+
+const toObjectId = (value) => new mongoose.Types.ObjectId(String(value));
+
+const toNumber = (value) => {
+  if (value === null || value === undefined || value === '') return 0;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  if (value && typeof value === 'object') {
+    if (value.$numberDecimal !== undefined) return toNumber(value.$numberDecimal);
+    if (typeof value.toString === 'function') return toNumber(value.toString());
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const formatLocalDate = (date) => {
+  const d = new Date(date);
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
 
 class WeeklyReportsService {
   /**
@@ -45,7 +71,7 @@ class WeeklyReportsService {
     const daysFromMonday = day === 0 ? 6 : day - 1;
     const lastMonday = new Date(today);
     lastMonday.setDate(today.getDate() - daysFromMonday);
-    return lastMonday.toISOString().split('T')[0];
+    return formatLocalDate(lastMonday);
   }
 
   /**
@@ -67,7 +93,7 @@ class WeeklyReportsService {
       Invoice.aggregate([
         {
           $match: {
-            company: new mongoose.Types.ObjectId(companyId),
+            company: toObjectId(companyId),
             invoiceDate: { $gte: start, $lte: end },
             status: { $in: ['fully_paid', 'partially_paid', 'confirmed'] }
           }
@@ -84,7 +110,7 @@ class WeeklyReportsService {
       Invoice.aggregate([
         {
           $match: {
-            company: new mongoose.Types.ObjectId(companyId),
+            company: toObjectId(companyId),
             invoiceDate: { $gte: prevStart, $lte: prevEnd },
             status: { $in: ['fully_paid', 'partially_paid', 'confirmed'] }
           }
@@ -101,7 +127,7 @@ class WeeklyReportsService {
       SalesOrder.aggregate([
         {
           $match: {
-            company: new mongoose.Types.ObjectId(companyId),
+            company: toObjectId(companyId),
             orderDate: { $gte: start, $lte: end },
             status: { $in: ['delivered', 'invoiced', 'closed'] }
           }
@@ -133,7 +159,7 @@ class WeeklyReportsService {
       SalesOrder.aggregate([
         {
           $match: {
-            company: new mongoose.Types.ObjectId(companyId),
+            company: toObjectId(companyId),
             orderDate: { $gte: prevStart, $lte: prevEnd },
             status: { $in: ['delivered', 'invoiced', 'closed'] }
           }
@@ -185,7 +211,7 @@ class WeeklyReportsService {
     return {
       reportName: 'Weekly Sales Performance',
       weekStart: weekStart,
-      weekEnd: end.toISOString().split('T')[0],
+      weekEnd: formatLocalDate(end),
       thisWeek,
       lastWeek,
       changes: {
@@ -206,13 +232,14 @@ class WeeklyReportsService {
     
     // Get all products and filter in JS to handle Decimal128 properly
     const allProducts = await Product.find({
-      company: new mongoose.Types.ObjectId(companyId),
+      company: toObjectId(companyId),
       status: { $ne: 'discontinued' }
     }, {
       name: 1,
       sku: 1,
       currentStock: 1,
       reorderPoint: 1,
+      lowStockThreshold: 1,
       reorderQuantity: 1,
       unit: 1,
       preferredSupplier: 1
@@ -222,8 +249,8 @@ class WeeklyReportsService {
     
     // Filter products where currentStock < reorderPoint
     const productsNeedingReorder = allProducts.filter(p => {
-      const stock = p.currentStock ? parseFloat(p.currentStock.toString()) : 0;
-      const reorderPoint = p.reorderPoint ? parseFloat(p.reorderPoint.toString()) : 0;
+      const stock = toNumber(p.currentStock);
+      const reorderPoint = toNumber(p.reorderPoint) || toNumber(p.lowStockThreshold);
       return stock < reorderPoint;
     });
 
@@ -232,8 +259,8 @@ class WeeklyReportsService {
     const warning = [];
     
     productsNeedingReorder.forEach(p => {
-      const stock = p.currentStock ? parseFloat(p.currentStock.toString()) : 0;
-      const reorderPoint = p.reorderPoint ? parseFloat(p.reorderPoint.toString()) : 0;
+      const stock = toNumber(p.currentStock);
+      const reorderPoint = toNumber(p.reorderPoint) || toNumber(p.lowStockThreshold);
       const deficit = reorderPoint - stock;
       const item = {
         productId: p._id,
@@ -242,7 +269,7 @@ class WeeklyReportsService {
         currentStock: stock,
         reorderPoint: reorderPoint,
         deficit: deficit,
-        suggestedOrder: p.reorderQuantity ? parseFloat(p.reorderQuantity.toString()) : deficit,
+        suggestedOrder: toNumber(p.reorderQuantity) || deficit,
         unit: p.unit,
         supplier: p.preferredSupplier?.name || 'No preferred supplier'
       };
@@ -272,14 +299,14 @@ class WeeklyReportsService {
     
     // Get all suppliers
     const suppliers = await Supplier.find({
-      company: new mongoose.Types.ObjectId(companyId)
+      company: toObjectId(companyId)
     }, { name: 1 }).lean();
     
     // Get POs raised this week
     const posRaised = await PurchaseOrder.aggregate([
       {
         $match: {
-          company: new mongoose.Types.ObjectId(companyId),
+          company: toObjectId(companyId),
           orderDate: { $gte: start, $lte: end }
         }
       },
@@ -296,7 +323,7 @@ class WeeklyReportsService {
     const grnsReceived = await GoodsReceivedNote.aggregate([
       {
         $match: {
-          company: new mongoose.Types.ObjectId(companyId),
+          company: toObjectId(companyId),
           receivedDate: { $gte: start, $lte: end },
           status: 'confirmed'
         }
@@ -314,8 +341,8 @@ class WeeklyReportsService {
     const pendingOrders = await PurchaseOrder.aggregate([
       {
         $match: {
-          company: new mongoose.Types.ObjectId(companyId),
-          status: { $in: ['sent', 'partial'] }
+          company: toObjectId(companyId),
+          status: { $in: ['approved', 'partially_received'] }
         }
       },
       {
@@ -332,9 +359,9 @@ class WeeklyReportsService {
     const overdueOrders = await PurchaseOrder.aggregate([
       {
         $match: {
-          company: new mongoose.Types.ObjectId(companyId),
+          company: toObjectId(companyId),
           expectedDeliveryDate: { $lt: today },
-          status: { $in: ['sent', 'partial'] }
+          status: { $in: ['approved', 'partially_received'] }
         }
       },
       {
@@ -395,7 +422,7 @@ class WeeklyReportsService {
     const result = {
       reportName: 'Weekly Supplier Performance',
       weekStart: weekStart,
-      weekEnd: end.toISOString().split('T')[0],
+      weekEnd: formatLocalDate(end),
       summary: {
         totalSuppliers: supplierData.length,
         totalPosRaised: posRaised.reduce((sum, p) => sum + p.count, 0),
@@ -406,7 +433,6 @@ class WeeklyReportsService {
       suppliers: supplierData
     };
     
-    console.log('Supplier Performance Debug:', JSON.stringify(result, null, 2));
     return result;
   }
 
@@ -420,17 +446,17 @@ class WeeklyReportsService {
     
     // Get all outstanding invoices
     const outstandingInvoices = await Invoice.find({
-      company: new mongoose.Types.ObjectId(companyId),
+      company: toObjectId(companyId),
       status: { $in: ['partially_paid', 'confirmed', 'sent'] },
-      balance: { $gt: 0 }
+      amountOutstanding: { $gt: 0 }
     }, {
-      invoiceNumber: 1,
+      referenceNo: 1,
       invoiceDate: 1,
       dueDate: 1,
       client: 1,
       totalAmount: 1,
       total: 1,
-      balance: 1,
+      amountOutstanding: 1,
       amountPaid: 1
     })
     .populate('client', 'name')
@@ -450,17 +476,17 @@ class WeeklyReportsService {
       const dueDate = new Date(inv.dueDate || inv.invoiceDate);
       const daysOverdue = Math.floor((today - dueDate) / (1000 * 60 * 60 * 24));
       
-      const balance = Number(inv.balance || 0);
+      const balance = toNumber(inv.amountOutstanding);
       totalOutstanding += balance;
       
       const invoiceData = {
         invoiceId: inv._id,
-        invoiceNumber: inv.invoiceNumber,
+        invoiceNumber: inv.referenceNo,
         clientName: inv.client?.name || 'Unknown',
         invoiceDate: inv.invoiceDate,
         dueDate: inv.dueDate,
         daysOverdue: daysOverdue > 0 ? daysOverdue : 0,
-        totalAmount: Number(inv.totalAmount || inv.total || 0),
+        totalAmount: toNumber(inv.totalAmount) || toNumber(inv.total),
         balance: balance
       };
       
@@ -506,13 +532,14 @@ class WeeklyReportsService {
     
     // Get all unpaid purchases
     const unpaidPurchases = await Purchase.find({
-      company: new mongoose.Types.ObjectId(companyId),
+      company: toObjectId(companyId),
       status: { $in: ['partial', 'received'] },
       balance: { $gt: 0 }
     }, {
       purchaseNumber: 1,
       purchaseDate: 1,
-      dueDate: 1,
+      supplierInvoiceDate: 1,
+      receivedDate: 1,
       supplier: 1,
       grandTotal: 1,
       total: 1,
@@ -532,10 +559,10 @@ class WeeklyReportsService {
     let totalPayable = 0;
     
     unpaidPurchases.forEach(p => {
-      const dueDate = new Date(p.dueDate || p.purchaseDate);
+      const dueDate = new Date(p.supplierInvoiceDate || p.receivedDate || p.purchaseDate);
       const daysOverdue = Math.floor((today - dueDate) / (1000 * 60 * 60 * 24));
       
-      const balance = Number(p.balance || 0);
+      const balance = toNumber(p.balance);
       totalPayable += balance;
       
       const purchaseData = {
@@ -543,9 +570,9 @@ class WeeklyReportsService {
         purchaseNumber: p.purchaseNumber,
         supplierName: p.supplier?.name || 'Unknown',
         purchaseDate: p.purchaseDate,
-        dueDate: p.dueDate,
+        dueDate,
         daysOverdue: daysOverdue > 0 ? daysOverdue : 0,
-        totalAmount: Number(p.grandTotal || p.total || 0),
+        totalAmount: toNumber(p.grandTotal) || toNumber(p.total),
         balance: balance
       };
       
@@ -588,9 +615,7 @@ class WeeklyReportsService {
   static async getWeeklyCashFlow(companyId, weekStart) {
     const { start, end } = this.getWeekRange(weekStart);
     
-    const ARReceipt = mongoose.model('ARReceipt');
-    const APPayment = mongoose.model('APPayment');
-    const Expense = mongoose.model('Expense');
+    const BankTransaction = mongoose.model('BankTransaction');
     
     // Generate array of dates for the week
     const weekDates = [];
@@ -600,27 +625,27 @@ class WeeklyReportsService {
       weekDates.push(d);
     }
     
-    // Get daily cash in (receipts)
-    // Source 1: ARReceipts (amountReceived)
-    const cashInReceipts = await ARReceipt.aggregate([
+    const bankTransactions = await BankTransaction.aggregate([
       {
         $match: {
-          company: new mongoose.Types.ObjectId(companyId),
-          receiptDate: { $gte: start, $lte: end },
-          status: { $in: ['posted', 'completed'] }
+          company: toObjectId(companyId),
+          date: { $gte: start, $lte: end }
         }
       },
       {
         $group: {
-          _id: { $dateToString: { format: '%Y-%m-%d', date: '$receiptDate' } },
-          amount: { $sum: { $toDouble: '$amountReceived' } }
+          _id: {
+            date: { $dateToString: { format: '%Y-%m-%d', date: '$date' } },
+            type: '$type'
+          },
+          amount: { $sum: { $toDouble: { $ifNull: ['$amount', 0] } } }
         }
       }
     ]);
     
     // Get Cash/Bank account codes
     const cashBankAccounts = await ChartOfAccount.find({
-      company: new mongoose.Types.ObjectId(companyId),
+      company: toObjectId(companyId),
       $or: [
         { subtype: { $in: ['Cash', 'Bank', 'cash', 'bank'] } },
         { name: { $regex: /cash|bank/i } }
@@ -629,11 +654,11 @@ class WeeklyReportsService {
     
     const cashBankCodes = cashBankAccounts.map(a => a.code);
     
-    // Source 2: Journal Entries (cash/bank debits from customers)
+    // Fallback source: posted journal entries for cash/bank accounts if no bank transactions exist.
     const cashInJournals = cashBankCodes.length > 0 ? await JournalEntry.aggregate([
       {
         $match: {
-          company: new mongoose.Types.ObjectId(companyId),
+          company: toObjectId(companyId),
           date: { $gte: start, $lte: end },
           status: 'posted'
         }
@@ -653,38 +678,10 @@ class WeeklyReportsService {
       }
     ]) : [];
     
-    // Merge cash in sources
-    const cashIn = [...cashInReceipts];
-    cashInJournals.forEach(j => {
-      const existing = cashIn.find(c => c._id === j._id);
-      if (existing) {
-        existing.amount += j.amount;
-      } else {
-        cashIn.push(j);
-      }
-    });
-    
-    // APPayment uses amountPaid (Decimal128)
-    const cashOutPayments = await APPayment.aggregate([
-      {
-        $match: {
-          company: new mongoose.Types.ObjectId(companyId),
-          paymentDate: { $gte: start, $lte: end }
-        }
-      },
-      {
-        $group: {
-          _id: { $dateToString: { format: '%Y-%m-%d', date: '$paymentDate' } },
-          amount: { $sum: { $toDouble: '$amountPaid' } }
-        }
-      }
-    ]);
-    
-    // Cash Out from Journal Entries (credits to cash/bank accounts)
     const cashOutJournals = cashBankCodes.length > 0 ? await JournalEntry.aggregate([
       {
         $match: {
-          company: new mongoose.Types.ObjectId(companyId),
+          company: toObjectId(companyId),
           date: { $gte: start, $lte: end },
           status: 'posted'
         }
@@ -704,28 +701,7 @@ class WeeklyReportsService {
       }
     ]) : [];
     
-    // Note: Expense model might need adjustment based on actual schema
-    let cashOutExpenses = [];
-    try {
-      cashOutExpenses = await Expense.aggregate([
-        {
-          $match: {
-            company: new mongoose.Types.ObjectId(companyId),
-            expenseDate: { $gte: start, $lte: end },
-            status: 'posted'
-          }
-        },
-        {
-          $group: {
-            _id: { $dateToString: { format: '%Y-%m-%d', date: '$expenseDate' } },
-            amount: { $sum: { $toDouble: '$amount' } }
-          }
-        }
-      ]);
-    } catch (e) {
-      // Expense model might not exist
-      cashOutExpenses = [];
-    }
+    const hasBankTransactions = bankTransactions.length > 0;
     
     // Build daily summary using local dates
     const dailyFlow = weekDates.map(date => {
@@ -735,12 +711,17 @@ class WeeklyReportsService {
       const day = String(date.getDate()).padStart(2, '0');
       const dateStr = `${year}-${month}-${day}`;
       
-      const receipts = cashIn.find(c => c._id === dateStr)?.amount || 0;
-      const payments = cashOutPayments.find(c => c._id === dateStr)?.amount || 0;
-      const expenses = cashOutExpenses.find(c => c._id === dateStr)?.amount || 0;
+      const bankForDate = bankTransactions.filter(c => c._id.date === dateStr);
+      const bankIn = bankForDate
+        .filter(c => ['deposit', 'transfer_in', 'opening'].includes(c._id.type))
+        .reduce((sum, c) => sum + toNumber(c.amount), 0);
+      const bankOut = bankForDate
+        .filter(c => ['withdrawal', 'transfer_out', 'closing'].includes(c._id.type))
+        .reduce((sum, c) => sum + toNumber(c.amount), 0);
+      const journalIn = cashInJournals.find(c => c._id === dateStr)?.amount || 0;
       const journalOut = cashOutJournals.find(c => c._id === dateStr)?.amount || 0;
-      
-      const cashOut = payments + expenses + journalOut;
+      const receipts = hasBankTransactions ? bankIn : journalIn;
+      const cashOut = hasBankTransactions ? bankOut : journalOut;
       
       return {
         date: dateStr,
@@ -757,7 +738,7 @@ class WeeklyReportsService {
     const result = {
       reportName: 'Weekly Cash Flow Summary',
       weekStart,
-      weekEnd: end.toISOString().split('T')[0],
+      weekEnd: formatLocalDate(end),
       summary: {
         weekTotalIn,
         weekTotalOut,
@@ -779,16 +760,16 @@ class WeeklyReportsService {
     
     // Check if payroll is in progress for this period
     const currentPayroll = await Payroll.findOne({
-      company: new mongoose.Types.ObjectId(companyId),
-      status: { $in: ['draft', 'processing'] },
-      periodStart: { $lte: today },
-      periodEnd: { $gte: today }
+      company: toObjectId(companyId),
+      record_status: 'draft',
+      pay_period_start: { $lte: today },
+      pay_period_end: { $gte: today }
     }).lean();
     
     if (!currentPayroll) {
       // No payroll in progress - check for any payroll records to get employee info
       const payrollRecords = await Payroll.find({
-        company: new mongoose.Types.ObjectId(companyId)
+      company: toObjectId(companyId)
       }).limit(1).lean();
       
       if (payrollRecords.length === 0 || !payrollRecords[0].employee) {
@@ -812,17 +793,18 @@ class WeeklyReportsService {
     
     // Payroll in progress - get all payroll records for this period
     const payrollRecords = await Payroll.find({
-      company: new mongoose.Types.ObjectId(companyId),
+      company: toObjectId(companyId),
       'period.year': currentPayroll.period.year,
       'period.month': currentPayroll.period.month
     }).lean();
     
     // Extract employee data from payroll records
     const employees = payrollRecords.map(p => ({
+      employeeId: p.employee.employeeId,
       name: `${p.employee.firstName} ${p.employee.lastName}`,
       employeeNumber: p.employee.employeeNumber,
       department: p.employee.department || 'N/A',
-      grossPay: p.grossSalary,
+      grossPay: p.salary?.grossSalary || 0,
       paye: p.deductions.paye,
       rssbEmployee: p.deductions.rssbEmployeePension + p.deductions.rssbEmployeeMaternity,
       rssbEmployer: p.contributions?.rssbEmployerPension + p.contributions?.rssbEmployerMaternity || 0,
@@ -833,8 +815,8 @@ class WeeklyReportsService {
     return {
       reportName: 'Weekly Payroll Preview',
       payrollInProgress: true,
-      weekStart: currentPayroll.periodStart.toISOString().split('T')[0],
-      weekEnd: currentPayroll.periodEnd.toISOString().split('T')[0],
+      periodStart: formatLocalDate(currentPayroll.pay_period_start),
+      periodEnd: formatLocalDate(currentPayroll.pay_period_end),
       summary: {
         employeeCount: employees.length,
         grossPay: employees.reduce((sum, e) => sum + e.grossPay, 0),

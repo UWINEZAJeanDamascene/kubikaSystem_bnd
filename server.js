@@ -268,11 +268,11 @@ async function initializeServer() {
   apiRouter.use('/purchases', require('./routes/purchaseRoutes'));
   apiRouter.use('/pos', require('./routes/posRoutes'));
   apiRouter.use('/sales-legacy', require('./routes/salesLegacyRoutes'));
-  apiRouter.use('/reports', require('./routes/reportRoutes'));
   apiRouter.use('/reports/daily', require('./routes/dailyReportsRoutes'));
   apiRouter.use('/reports/weekly', require('./routes/weeklyReportsRoutes'));
   apiRouter.use('/reports/monthly', require('./routes/monthlyReportsRoutes'));
   apiRouter.use('/reports/annual', require('./routes/annualReportsRoutes'));
+  apiRouter.use('/reports', require('./routes/reportRoutes'));
   apiRouter.use('/dashboard', require('./routes/dashboard.routes'));
   apiRouter.use('/dashboard', require('./routes/dashboardRoutes'));
   apiRouter.use('/currencies', require('./routes/currencyRoutes'));

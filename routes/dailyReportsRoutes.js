@@ -20,11 +20,16 @@ const ExcelFormatter = require('../src/exports/formatters/ExcelFormatter');
 // Helper to format RWF
 const formatRWF = (amount) => {
   if (amount === null || amount === undefined) return '-';
-  return 'RWF ' + Math.abs(amount).toLocaleString('en-RW', {
+  const numeric = Number(amount) || 0;
+  const sign = numeric < 0 ? '-' : '';
+  return sign + 'RWF ' + Math.abs(numeric).toLocaleString('en-RW', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2
   });
 };
+
+const getCompanyTin = (company) =>
+  company?.tax_identification_number || company?.registration_number || company?.tin || 'N/A';
 
 // Apply authentication and company context to all routes
 router.use(protect);
@@ -71,7 +76,7 @@ router.get('/sales/pdf', authorize('reports', 'read'), async (req, res) => {
     // Header
     pdfRenderer.renderReportHeader(doc, {
       companyName: company?.name || 'Company',
-      companyTin: company?.tin || 'N/A',
+      companyTin: getCompanyTin(company),
       reportTitle: 'Daily Sales Summary',
       period: date
     });
@@ -206,7 +211,7 @@ router.get('/purchases/pdf', authorize('reports', 'read'), async (req, res) => {
     
     pdfRenderer.renderReportHeader(doc, {
       companyName: company?.name || 'Company',
-      companyTin: company?.tin || 'N/A',
+      companyTin: getCompanyTin(company),
       reportTitle: 'Daily Purchases Summary',
       period: date
     });
@@ -343,7 +348,7 @@ router.get('/cash-position/pdf', authorize('reports', 'read'), async (req, res) 
     
     pdfRenderer.renderReportHeader(doc, {
       companyName: company?.name || 'Company',
-      companyTin: company?.tin || 'N/A',
+      companyTin: getCompanyTin(company),
       reportTitle: 'Daily Cash Position',
       period: date
     });
@@ -462,7 +467,7 @@ router.get('/stock-movement/pdf', authorize('reports', 'read'), async (req, res)
     
     pdfRenderer.renderReportHeader(doc, {
       companyName: company?.name || 'Company',
-      companyTin: company?.tin || 'N/A',
+      companyTin: getCompanyTin(company),
       reportTitle: 'Daily Stock Movement',
       period: date
     });
@@ -485,7 +490,7 @@ router.get('/stock-movement/pdf', authorize('reports', 'read'), async (req, res)
       pdfRenderer.renderDataTable(doc, {
         headers: ['Product', 'Type', 'Qty', 'Unit Cost', 'Total', 'Balance'],
         columnWidths: [180, 80, 50, 70, 70, 70],
-        data: data.movements.slice(0, 50), // Limit to 50 rows for PDF
+        data: data.movements,
         dataMapper: (item) => [
           item.productName,
           item.type,
@@ -590,7 +595,7 @@ router.get('/ar-activity/pdf', authorize('reports', 'read'), async (req, res) =>
     
     pdfRenderer.renderReportHeader(doc, {
       companyName: company?.name || 'Company',
-      companyTin: company?.tin || 'N/A',
+      companyTin: getCompanyTin(company),
       reportTitle: 'Daily Accounts Receivable Activity',
       period: date
     });
@@ -759,7 +764,7 @@ router.get('/ap-activity/pdf', authorize('reports', 'read'), async (req, res) =>
     
     pdfRenderer.renderReportHeader(doc, {
       companyName: company?.name || 'Company',
-      companyTin: company?.tin || 'N/A',
+      companyTin: getCompanyTin(company),
       reportTitle: 'Daily Accounts Payable Activity',
       period: date
     });
@@ -925,7 +930,7 @@ router.get('/journal-entries/pdf', authorize('reports', 'read'), async (req, res
     
     pdfRenderer.renderReportHeader(doc, {
       companyName: company?.name || 'Company',
-      companyTin: company?.tin || 'N/A',
+      companyTin: getCompanyTin(company),
       reportTitle: 'Daily Journal Entries Log',
       period: date
     });
@@ -1073,16 +1078,21 @@ router.get('/tax-collected/pdf', authorize('reports', 'read'), async (req, res) 
     
     pdfRenderer.renderReportHeader(doc, {
       companyName: company?.name || 'Company',
-      companyTin: company?.tin || 'N/A',
+      companyTin: getCompanyTin(company),
       reportTitle: 'Daily Tax Collected',
       period: date
     });
     
     pdfRenderer.renderSummarySection(doc, [
-      { label: 'Total Output VAT', value: data.summary.totalOutputVAT },
+      { label: 'Net Output VAT', value: data.summary.totalOutputVAT },
+      { label: 'Gross Output VAT', value: data.summary.grossOutputVAT },
+      { label: 'VAT Reversed', value: data.summary.outputVATReversed },
       { label: 'Taxable Sales', value: data.summary.taxableSales },
       { label: 'Total Sales', value: data.summary.totalSales },
-      { label: 'Exempt Sales', value: data.summary.exemptSales }
+      { label: 'Exempt Sales', value: data.summary.exemptSales },
+      { label: 'WHT Collected', value: data.summary.withholdingTaxCollected },
+      { label: 'WHT Withheld/Paid', value: data.summary.withholdingTaxPaid },
+      { label: 'Net WHT', value: data.summary.netWithholdingTax }
     ]);
     
     pdfRenderer.renderDivider(doc);
@@ -1104,6 +1114,22 @@ router.get('/tax-collected/pdf', authorize('reports', 'read'), async (req, res) 
         ],
         alignments: ['left', 'center', 'right', 'right'],
         formats: [null, null, pdfRenderer.FORMATTERS.currency, pdfRenderer.FORMATTERS.currency]
+      });
+    }
+
+    if (data.withholdingBreakdown && data.withholdingBreakdown.length > 0) {
+      if (doc.y > doc.page.height - 170) doc.addPage();
+      doc.moveDown(0.8);
+      doc.fontSize(12).font('Helvetica-Bold').text('Withholding Tax Breakdown', 30, doc.y);
+      doc.moveDown(0.5);
+
+      pdfRenderer.renderDataTable(doc, {
+        headers: ['Tax Type', 'Source', 'Count', 'Amount'],
+        columnWidths: [190, 140, 80, 120],
+        data: data.withholdingBreakdown,
+        dataMapper: (item) => [item.taxType, item.source, item.count, item.amount],
+        alignments: ['left', 'left', 'right', 'right'],
+        formats: [null, null, null, pdfRenderer.FORMATTERS.currency]
       });
     }
     
@@ -1129,10 +1155,15 @@ router.get('/tax-collected/excel', authorize('reports', 'read'), async (req, res
           { header: 'Amount', key: 'amount', width: 15, type: 'currency' }
         ],
         data: [
-          { metric: 'Total Output VAT', amount: data.summary.totalOutputVAT },
+          { metric: 'Net Output VAT', amount: data.summary.totalOutputVAT },
+          { metric: 'Gross Output VAT', amount: data.summary.grossOutputVAT },
+          { metric: 'VAT Reversed', amount: data.summary.outputVATReversed },
           { metric: 'Taxable Sales', amount: data.summary.taxableSales },
           { metric: 'Total Sales', amount: data.summary.totalSales },
-          { metric: 'Exempt Sales', amount: data.summary.exemptSales }
+          { metric: 'Exempt Sales', amount: data.summary.exemptSales },
+          { metric: 'WHT Collected', amount: data.summary.withholdingTaxCollected },
+          { metric: 'WHT Withheld/Paid', amount: data.summary.withholdingTaxPaid },
+          { metric: 'Net WHT', amount: data.summary.netWithholdingTax }
         ]
       },
       'Tax Breakdown': {
@@ -1143,6 +1174,15 @@ router.get('/tax-collected/excel', authorize('reports', 'read'), async (req, res
           { header: 'Tax Amount', key: 'taxAmount', width: 15, type: 'currency' }
         ],
         data: data.taxBreakdown
+      },
+      'Withholding': {
+        columns: [
+          { header: 'Tax Type', key: 'taxType', width: 25 },
+          { header: 'Source', key: 'source', width: 18 },
+          { header: 'Count', key: 'count', width: 10 },
+          { header: 'Amount', key: 'amount', width: 15, type: 'currency' }
+        ],
+        data: data.withholdingBreakdown || []
       }
     });
     
