@@ -20,11 +20,16 @@ const ExcelFormatter = require('../src/exports/formatters/ExcelFormatter');
 // Helper to format RWF
 const formatRWF = (amount) => {
   if (amount === null || amount === undefined) return '-';
-  return 'RWF ' + Math.abs(amount).toLocaleString('en-RW', {
+  const numeric = Number(amount) || 0;
+  const sign = numeric < 0 ? '-' : '';
+  return sign + 'RWF ' + Math.abs(numeric).toLocaleString('en-RW', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2
   });
 };
+
+const getCompanyTin = (company) =>
+  company?.tax_identification_number || company?.registration_number || company?.tin || 'N/A';
 
 // Validate year/month parameters
 const validateParams = (req, res, next) => {
@@ -73,7 +78,7 @@ router.get('/profit-loss/pdf', authorize('reports', 'read'), validateParams, asy
 
     pdfRenderer.renderReportHeader(doc, {
       companyName: company?.name || 'Company',
-      companyTin: company?.tin || 'N/A',
+      companyTin: getCompanyTin(company),
       reportTitle: 'Monthly Profit & Loss Statement',
       period: data.period
     });
@@ -168,7 +173,7 @@ router.get('/balance-sheet/pdf', authorize('reports', 'read'), validateParams, a
 
     pdfRenderer.renderReportHeader(doc, {
       companyName: company?.name || 'Company',
-      companyTin: company?.tin || 'N/A',
+      companyTin: getCompanyTin(company),
       reportTitle: 'Monthly Balance Sheet',
       period: `As of ${data.asOfDate}`
     });
@@ -293,7 +298,7 @@ router.get('/trial-balance/pdf', authorize('reports', 'read'), validateParams, a
 
     pdfRenderer.renderReportHeader(doc, {
       companyName: company?.name || 'Company',
-      companyTin: company?.tin || 'N/A',
+      companyTin: getCompanyTin(company),
       reportTitle: 'Monthly Trial Balance',
       period: `As of ${data.asOfDate}`
     });
@@ -382,7 +387,7 @@ router.get('/cash-flow/pdf', authorize('reports', 'read'), validateParams, async
 
     pdfRenderer.renderReportHeader(doc, {
       companyName: company?.name || 'Company',
-      companyTin: company?.tin || 'N/A',
+      companyTin: getCompanyTin(company),
       reportTitle: 'Monthly Cash Flow Statement',
       period: data.period
     });
@@ -494,7 +499,7 @@ router.get('/stock-valuation/pdf', authorize('reports', 'read'), validateParams,
 
     pdfRenderer.renderReportHeader(doc, {
       companyName: company?.name || 'Company',
-      companyTin: company?.tin || 'N/A',
+      companyTin: getCompanyTin(company),
       reportTitle: 'Monthly Stock Valuation Report',
       period: `As of ${data.asOfDate}`
     });
@@ -599,7 +604,7 @@ router.get('/sales-by-customer/pdf', authorize('reports', 'read'), validateParam
 
     pdfRenderer.renderReportHeader(doc, {
       companyName: company?.name || 'Company',
-      companyTin: company?.tin || 'N/A',
+      companyTin: getCompanyTin(company),
       reportTitle: 'Monthly Sales by Customer',
       period: data.period
     });
@@ -690,7 +695,7 @@ router.get('/sales-by-category/pdf', authorize('reports', 'read'), validateParam
 
     pdfRenderer.renderReportHeader(doc, {
       companyName: company?.name || 'Company',
-      companyTin: company?.tin || 'N/A',
+      companyTin: getCompanyTin(company),
       reportTitle: 'Monthly Sales by Product Category',
       period: data.period
     });
@@ -783,7 +788,7 @@ router.get('/purchases-by-supplier/pdf', authorize('reports', 'read'), validateP
 
     pdfRenderer.renderReportHeader(doc, {
       companyName: company?.name || 'Company',
-      companyTin: company?.tin || 'N/A',
+      companyTin: getCompanyTin(company),
       reportTitle: 'Monthly Purchases by Supplier',
       period: data.period
     });
@@ -875,7 +880,7 @@ router.get('/ar-aging/pdf', authorize('reports', 'read'), validateParams, async 
 
     pdfRenderer.renderReportHeader(doc, {
       companyName: company?.name || 'Company',
-      companyTin: company?.tin || 'N/A',
+      companyTin: getCompanyTin(company),
       reportTitle: 'Monthly Accounts Receivable Aging',
       period: `As of ${data.asOfDate}`
     });
@@ -995,7 +1000,7 @@ router.get('/ap-aging/pdf', authorize('reports', 'read'), validateParams, async 
 
     pdfRenderer.renderReportHeader(doc, {
       companyName: company?.name || 'Company',
-      companyTin: company?.tin || 'N/A',
+      companyTin: getCompanyTin(company),
       reportTitle: 'Monthly Accounts Payable Aging',
       period: `As of ${data.asOfDate}`
     });
@@ -1113,7 +1118,7 @@ router.get('/payroll-summary/pdf', authorize('reports', 'read'), validateParams,
 
     pdfRenderer.renderReportHeader(doc, {
       companyName: company?.name || 'Company',
-      companyTin: company?.tin || 'N/A',
+      companyTin: getCompanyTin(company),
       reportTitle: 'Monthly Payroll Summary',
       period: data.period
     });
@@ -1223,7 +1228,7 @@ router.get('/vat-return/pdf', authorize('reports', 'read'), validateParams, asyn
 
     pdfRenderer.renderReportHeader(doc, {
       companyName: company?.name || 'Company',
-      companyTin: company?.tin || 'N/A',
+      companyTin: getCompanyTin(company),
       reportTitle: 'Monthly VAT Return Worksheet',
       period: data.taxPeriod
     });
@@ -1343,7 +1348,7 @@ router.get('/bank-reconciliation/pdf', authorize('reports', 'read'), validatePar
 
     pdfRenderer.renderReportHeader(doc, {
       companyName: company?.name || 'Company',
-      companyTin: company?.tin || 'N/A',
+      companyTin: getCompanyTin(company),
       reportTitle: 'Monthly Bank Reconciliation Report',
       period: `As of ${data.asOfDate}`
     });
@@ -1449,7 +1454,7 @@ router.get('/budget-vs-actual/pdf', authorize('reports', 'read'), validateParams
 
     pdfRenderer.renderReportHeader(doc, {
       companyName: company?.name || 'Company',
-      companyTin: company?.tin || 'N/A',
+      companyTin: getCompanyTin(company),
       reportTitle: 'Monthly Budget vs Actual',
       period: data.period
     });
@@ -1552,7 +1557,7 @@ router.get('/general-ledger/pdf', authorize('reports', 'read'), validateParams, 
 
     pdfRenderer.renderReportHeader(doc, {
       companyName: company?.name || 'Company',
-      companyTin: company?.tin || 'N/A',
+      companyTin: getCompanyTin(company),
       reportTitle: 'Monthly General Ledger Activity',
       period: data.period
     });

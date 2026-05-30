@@ -24,10 +24,37 @@
 
 const mongoose = require('mongoose');
 
+const toObjectId = (value) => new mongoose.Types.ObjectId(String(value));
+
+const toNumber = (value) => {
+  if (value === null || value === undefined || value === '') return 0;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  if (value && typeof value === 'object') {
+    if (value.$numberDecimal !== undefined) return toNumber(value.$numberDecimal);
+    if (typeof value.toString === 'function') return toNumber(value.toString());
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const formatLocalDate = (date) => {
+  const d = new Date(date);
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
 // Format currency in Rwandan Francs
 const formatRWF = (amount) => {
   if (amount === null || amount === undefined) return '-';
-  return 'RWF ' + Math.abs(amount).toLocaleString('en-RW', {
+  const numeric = toNumber(amount);
+  const sign = numeric < 0 ? '-' : '';
+  return sign + 'RWF ' + Math.abs(numeric).toLocaleString('en-RW', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2
   });
@@ -123,7 +150,7 @@ class MonthlyReportsService {
     const revenueCurrent = await Invoice.aggregate([
       {
         $match: {
-          company: new mongoose.Types.ObjectId(companyId),
+          company: toObjectId(companyId),
           invoiceDate: { $gte: start, $lte: end },
           status: { $in: ['fully_paid', 'partially_paid', 'confirmed', 'sent'] }
         }
@@ -135,7 +162,7 @@ class MonthlyReportsService {
     const revenuePrior = await Invoice.aggregate([
       {
         $match: {
-          company: new mongoose.Types.ObjectId(companyId),
+          company: toObjectId(companyId),
           invoiceDate: { $gte: priorRange.start, $lte: priorRange.end },
           status: { $in: ['fully_paid', 'partially_paid', 'confirmed', 'sent'] }
         }
@@ -308,30 +335,19 @@ class MonthlyReportsService {
     const StockMovement = mongoose.model('StockMovement');
     const Purchase = mongoose.model('Purchase');
 
-    const [stockOut, purchases] = await Promise.all([
-      StockMovement.aggregate([
-        {
-          $match: {
-            company: new mongoose.Types.ObjectId(companyId),
-            movementDate: { $gte: start, $lte: end },
-            type: 'out',
-            reason: { $in: ['sale', 'dispatch'] }
-          }
-        },
-        { $group: { _id: null, total: { $sum: { $multiply: [{ $toDouble: '$quantity' }, { $toDouble: { $ifNull: ['$unitCost', 0] } }] } } } }
-      ]),
-      Purchase.aggregate([
-        {
-          $match: {
-            company: new mongoose.Types.ObjectId(companyId),
-            purchaseDate: { $gte: start, $lte: end }
-          }
-        },
-        { $group: { _id: null, total: { $sum: { $toDouble: { $ifNull: ['$subtotal', '$grandTotal'] } } } } }
-      ])
+    const stockOut = await StockMovement.aggregate([
+      {
+        $match: {
+          company: toObjectId(companyId),
+          movementDate: { $gte: start, $lte: end },
+          type: 'out',
+          reason: { $in: ['sale', 'dispatch'] }
+        }
+      },
+      { $group: { _id: null, total: { $sum: { $multiply: [{ $toDouble: '$quantity' }, { $toDouble: { $ifNull: ['$unitCost', 0] } }] } } } }
     ]);
 
-    return (stockOut[0]?.total || 0) + (purchases[0]?.total || 0) * 0.7; // Approximation
+    return stockOut[0]?.total || 0;
   }
 
   // Helper: Get expenses by category
@@ -342,9 +358,12 @@ class MonthlyReportsService {
     const expenses = await Expense.aggregate([
       {
         $match: {
-          company: new mongoose.Types.ObjectId(companyId),
-          date: { $gte: start, $lte: end },
-          status: 'posted'
+          company: toObjectId(companyId),
+          $or: [
+            { expense_date: { $gte: start, $lte: end } },
+            { date: { $gte: start, $lte: end } }
+          ],
+          status: { $ne: 'cancelled' }
         }
       },
       {
@@ -1054,9 +1073,9 @@ class MonthlyReportsService {
       {
         $group: {
           _id: '$client',
-          totalRevenue: { $sum: { $toDouble: '$total' } },
+          totalRevenue: { $sum: { $toDouble: { $ifNull: ['$totalAmount', '$total', 0] } } },
           invoiceCount: { $sum: 1 },
-          outstandingBalance: { $sum: { $toDouble: { $ifNull: ['$balanceDue', 0] } } }
+          outstandingBalance: { $sum: { $toDouble: { $ifNull: ['$amountOutstanding', '$balanceDue', 0] } } }
         }
       },
       { $sort: { totalRevenue: -1 } },
@@ -1212,7 +1231,7 @@ class MonthlyReportsService {
         $match: {
           company: new mongoose.Types.ObjectId(companyId),
           orderDate: { $gte: start, $lte: end },
-          status: { $in: ['ordered', 'received', 'partial', 'completed', 'paid', 'fully_received', 'partially_received', 'confirmed'] }
+          status: { $in: ['draft', 'approved', 'partially_received', 'fully_received', 'cancelled'] }
         }
       },
       {
@@ -1220,7 +1239,7 @@ class MonthlyReportsService {
           _id: '$supplier',
           totalOrdered: { $sum: { $toDouble: { $ifNull: ['$totalAmount', '$subtotal', 0] } } },
           poCount: { $sum: 1 },
-          totalInvoiced: { $sum: { $cond: [{ $ne: ['$supplierInvoiceNumber', null] }, { $toDouble: { $ifNull: ['$totalAmount', '$subtotal', 0] } }, 0] } }
+          totalInvoiced: { $sum: 0 }
         }
       }
     ]);
@@ -1293,9 +1312,10 @@ class MonthlyReportsService {
     const Invoice = mongoose.model('Invoice');
 
     const invoices = await Invoice.find({
-      company: new mongoose.Types.ObjectId(companyId),
-      status: { $in: ['sent', 'partially_paid'] },
-      balanceDue: { $gt: 0 }
+      company: toObjectId(companyId),
+      status: { $in: ['confirmed', 'partially_paid'] },
+      amountOutstanding: { $gt: 0 },
+      invoiceDate: { $lte: end }
     }).populate('client', 'name');
 
     const buckets = {
@@ -1311,7 +1331,7 @@ class MonthlyReportsService {
     invoices.forEach(inv => {
       const dueDate = new Date(inv.dueDate || inv.invoiceDate);
       const daysOverdue = Math.floor((end - dueDate) / (1000 * 60 * 60 * 24));
-      const balance = Number(inv.balanceDue) || 0;
+      const balance = toNumber(inv.amountOutstanding) || toNumber(inv.balanceDue);
 
       let bucket;
       if (daysOverdue <= 0) bucket = 'current';
@@ -1346,7 +1366,7 @@ class MonthlyReportsService {
 
     return {
       reportName: 'Monthly Accounts Receivable Aging',
-      asOfDate: end.toISOString().split('T')[0],
+      asOfDate: formatLocalDate(end),
       year,
       month,
       companyId,
@@ -1378,9 +1398,10 @@ class MonthlyReportsService {
     const Purchase = mongoose.model('Purchase');
 
     const purchases = await Purchase.find({
-      company: new mongoose.Types.ObjectId(companyId),
+      company: toObjectId(companyId),
       status: { $in: ['received', 'partial'] },
-      balanceDue: { $gt: 0 }
+      balance: { $gt: 0 },
+      purchaseDate: { $lte: end }
     }).populate('supplier', 'name');
 
     const buckets = {
@@ -1394,9 +1415,9 @@ class MonthlyReportsService {
     const supplierAging = [];
 
     purchases.forEach(p => {
-      const dueDate = new Date(p.dueDate || p.purchaseDate);
+      const dueDate = new Date(p.supplierInvoiceDate || p.receivedDate || p.purchaseDate);
       const daysOverdue = Math.floor((end - dueDate) / (1000 * 60 * 60 * 24));
-      const balance = Number(p.balanceDue) || 0;
+      const balance = toNumber(p.balance) || toNumber(p.balanceDue);
 
       let bucket;
       if (daysOverdue <= 0) bucket = 'current';
@@ -1430,7 +1451,7 @@ class MonthlyReportsService {
 
     return {
       reportName: 'Monthly Accounts Payable Aging',
-      asOfDate: end.toISOString().split('T')[0],
+      asOfDate: formatLocalDate(end),
       year,
       month,
       companyId,
@@ -1458,10 +1479,10 @@ class MonthlyReportsService {
     const Payroll = mongoose.model('Payroll');
 
     const payrollRecords = await Payroll.find({
-      company: new mongoose.Types.ObjectId(companyId),
+      company: toObjectId(companyId),
       'period.year': year,
       'period.month': month,
-      status: { $in: ['processed', 'paid', 'Paid', undefined, null] }
+      record_status: { $in: ['draft', 'finalised', 'paid'] }
     });
 
     const employees = payrollRecords.map(p => ({
@@ -1557,9 +1578,9 @@ class MonthlyReportsService {
     const poInputVAT = await PurchaseOrder.aggregate([
       {
         $match: {
-          company: new mongoose.Types.ObjectId(companyId),
+          company: toObjectId(companyId),
           orderDate: { $gte: start, $lte: end },
-          status: { $in: ['ordered', 'received', 'partial', 'completed', 'paid', 'fully_received', 'partially_received'] }
+          status: { $in: ['approved', 'partially_received', 'fully_received'] }
         }
       },
       {
@@ -1695,10 +1716,11 @@ class MonthlyReportsService {
         }
 
         // Get the bank statement balance (running balance from the statement)
-        const bankStatementBalance = latestStatementLine?.runningBalance
-          ? (typeof latestStatementLine.runningBalance === 'object' && latestStatementLine.runningBalance?.$numberDecimal
-              ? parseFloat(latestStatementLine.runningBalance.$numberDecimal)
-              : Number(latestStatementLine.runningBalance))
+        const statementBalanceValue = latestStatementLine?.runningBalance ?? latestStatementLine?.balance;
+        const bankStatementBalance = statementBalanceValue
+          ? (typeof statementBalanceValue === 'object' && statementBalanceValue?.$numberDecimal
+              ? parseFloat(statementBalanceValue.$numberDecimal)
+              : Number(statementBalanceValue))
           : 0;
 
         // Calculate adjusted bank balance: statement balance + outstanding deposits - outstanding checks
@@ -1785,7 +1807,7 @@ class MonthlyReportsService {
           status: { $in: ['fully_paid', 'partially_paid', 'confirmed', 'sent'] }
         }
       },
-      { $group: { _id: null, total: { $sum: { $toDouble: '$total' } } } }
+      { $group: { _id: null, total: { $sum: { $toDouble: { $ifNull: ['$totalAmount', '$total', 0] } } } } }
     ]);
 
     // Get actual expenses from multiple sources: Expense, Purchase (paid), Payroll
@@ -1793,7 +1815,7 @@ class MonthlyReportsService {
       // Direct expenses
       Expense.aggregate([
         { $match: { company: new mongoose.Types.ObjectId(companyId), expense_date: { $gte: start, $lte: end } } },
-        { $group: { _id: '$category', actual: { $sum: { $toDouble: '$amount' } } } }
+        { $group: { _id: { $ifNull: ['$category', 'Operations'] }, actual: { $sum: { $toDouble: { $ifNull: ['$amountInRWF', '$amount', 0] } } } } }
       ]),
       // Purchase orders that are paid/received
       Purchase.aggregate([
@@ -1801,10 +1823,10 @@ class MonthlyReportsService {
           $match: { 
             company: new mongoose.Types.ObjectId(companyId), 
             purchaseDate: { $gte: start, $lte: end },
-            status: { $in: ['paid', 'received', 'partially_paid', 'confirmed'] }
+            status: { $in: ['paid', 'received', 'partial'] }
           } 
         },
-        { $group: { _id: '$category', actual: { $sum: { $toDouble: '$total' } } } }
+        { $group: { _id: 'Purchases', actual: { $sum: { $toDouble: { $ifNull: ['$grandTotal', '$total', 0] } } } } }
       ]),
       // Payroll expenses
       Payroll.aggregate([
@@ -1813,7 +1835,7 @@ class MonthlyReportsService {
             company: new mongoose.Types.ObjectId(companyId), 
             'period.year': year,
             'period.month': month,
-            status: { $in: ['processed', 'paid', 'Paid', undefined, null] }
+            record_status: { $in: ['draft', 'finalised', 'paid'] }
           } 
         },
         { $group: { _id: 'Payroll', actual: { $sum: { $toDouble: '$netPay' } } } }
